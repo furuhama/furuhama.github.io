@@ -1,0 +1,46 @@
+---
+layout: default
+title: Tag System Simulator
+---
+
+<h1 class="post-title">{{ page.title }}</h1>
+
+<div class="input-group">
+    <label for="m-value">M Value:</label>
+    <input type="number" id="m-value" min="1" value="2">
+</div>
+
+<div class="input-group">
+    <label for="initial-string">Initial String:</label>
+    <input type="text" id="initial-string" value="1010">
+</div>
+
+<div class="input-group">
+    <label for="max-steps">Maximum Steps:</label>
+    <input type="number" id="max-steps" min="1" value="100">
+</div>
+
+<div class="input-group">
+    <label>Production Rules:</label>
+    <div id="rules-container">
+        <div class="rule-input">
+            <input type="text" placeholder="Input character" class="rule-input-char" value="0">
+            <input type="text" placeholder="Output string" class="rule-output-string" value="0">
+            <button class="delete-rule" onclick="deleteRule(this)">✕</button>
+        </div>
+        <div class="rule-input">
+            <input type="text" placeholder="Input character" class="rule-input-char" value="1">
+            <input type="text" placeholder="Output string" class="rule-output-string" value="101">
+            <button class="delete-rule" onclick="deleteRule(this)">✕</button>
+        </div>
+    </div>
+    <button onclick="addRule()">Add Rule</button>
+</div>
+
+<button onclick="simulate()">Run Simulation</button>
+
+<div class="output" id="output">
+    <!-- Simulation steps will be shown here -->
+</div>
+
+<script type="text/javascript" src="{{ site.url }}/assets/javascript/tag-system.js"></script>
