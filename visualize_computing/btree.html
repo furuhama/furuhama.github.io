@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>B-Tree Index 可視化</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f6f8fa;
+      --surface2: #eaeef2;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --text-muted: #636c76;
+      --green: #1a7f37;
+      --blue: #0969da;
+      --purple: #8250df;
+      --orange: #bc4c00;
+      --red: #cf222e;
+      --yellow: #9a6700;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface);
+    }
+
+    header h1 { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+
+    .badge {
+      background: rgba(26,127,55,0.1);
+      color: var(--green);
+      border: 1px solid rgba(26,127,55,0.3);
+      font-size: 0.7rem; font-weight: 700;
+      padding: 2px 8px; border-radius: 12px;
+    }
+
+    .back-link {
+      font-size: 0.75rem; color: var(--text-muted);
+      text-decoration: none; margin-left: auto;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .back-link:hover { color: var(--text); }
+
+    .tab-bar {
+      display: flex;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+    }
+
+    .tab-btn {
+      padding: 10px 18px;
+      font-size: 0.82rem; font-weight: 500;
+      color: var(--text-muted);
+      background: none; border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer; transition: all 0.15s;
+      margin-bottom: -1px;
+    }
+    .tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); font-weight: 700; }
+    .tab-btn:hover:not(.active) { color: var(--text); }
+
+    .main {
+      display: flex;
+      flex: 1;
+    }
+
+    .svg-panel {
+      flex: 1;
+      padding: 24px 24px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    #treeSvg {
+      width: 100%;
+      max-width: 700px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+
+    .svg-note {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      align-self: flex-start;
+      max-width: 700px;
+      width: 100%;
+    }
+
+    .info-panel {
+      width: 300px;
+      min-width: 260px;
+      border-left: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .info-section {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .info-title {
+      font-size: 0.7rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .scenario-desc {
+      font-size: 0.8rem; color: var(--text); line-height: 1.65;
+    }
+    .scenario-desc code {
+      background: var(--surface2);
+      padding: 1px 5px; border-radius: 4px;
+      font-family: 'Fira Code', monospace; font-size: 0.76rem;
+    }
+
+    .step-explain {
+      font-size: 0.8rem; color: var(--text);
+      line-height: 1.75; min-height: 64px;
+      transition: opacity 0.2s;
+    }
+    .step-explain .hl-blue   { color: var(--blue);   font-weight: 700; }
+    .step-explain .hl-green  { color: var(--green);  font-weight: 700; }
+    .step-explain .hl-red    { color: var(--red);    font-weight: 700; }
+    .step-explain .hl-purple { color: var(--purple); font-weight: 700; }
+    .step-explain .hl-orange { color: var(--orange); font-weight: 700; }
+
+    .legend {
+      padding: 10px 16px;
+      display: flex; flex-direction: column; gap: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 0.72rem; color: var(--text-muted); }
+    .legend-box { width: 22px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+
+    .controls {
+      padding: 14px 16px;
+      display: flex; flex-direction: column; gap: 8px;
+      margin-top: auto;
+    }
+
+    .controls-row { display: flex; gap: 8px; }
+
+    .btn {
+      padding: 7px 12px;
+      border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text);
+      font-size: 0.8rem; cursor: pointer;
+      transition: all 0.15s; font-weight: 500;
+      flex: 1; text-align: center;
+    }
+    .btn:hover { background: var(--surface2); }
+    .btn.primary { background: var(--blue); color: #fff; border-color: var(--blue); font-weight: 700; }
+    .btn.primary:hover { background: #0550ae; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .step-counter {
+      font-size: 0.72rem; color: var(--text-muted); text-align: center;
+    }
+
+    .step-dots {
+      display: flex; gap: 4px; justify-content: center; flex-wrap: wrap;
+    }
+    .step-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--border); transition: background 0.2s;
+    }
+    .step-dot.done    { background: var(--green); }
+    .step-dot.current { background: var(--blue); }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <rect x="3" y="3" width="7" height="4" rx="1" stroke="#0969da" stroke-width="1.8"/>
+    <rect x="3" y="10" width="7" height="4" rx="1" stroke="#0969da" stroke-width="1.8"/>
+    <rect x="3" y="17" width="7" height="4" rx="1" stroke="#0969da" stroke-width="1.8"/>
+    <rect x="14" y="3" width="7" height="4" rx="1" stroke="#1a7f37" stroke-width="1.8"/>
+    <rect x="14" y="10" width="7" height="4" rx="1" stroke="#1a7f37" stroke-width="1.8"/>
+    <line x1="10" y1="5" x2="14" y2="5" stroke="#636c76" stroke-width="1.5"/>
+    <line x1="10" y1="12" x2="14" y2="12" stroke="#636c76" stroke-width="1.5"/>
+    <line x1="7" y1="19" x2="7" y2="24" stroke="#636c76" stroke-width="1.5"/>
+  </svg>
+  <h1>B-Tree Index 可視化</h1>
+  <span class="badge">Interactive</span>
+  <a class="back-link" href="index.html">
+    <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+      <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
+    </svg>
+    一覧へ戻る
+  </a>
+</header>
+
+<div class="tab-bar" id="tabBar"></div>
+
+<div class="main">
+  <div class="svg-panel">
+    <svg id="treeSvg" viewBox="0 0 700 260" preserveAspectRatio="xMidYMid meet"></svg>
+    <p class="svg-note">次数 3 の B-Tree（各ノード最大 2 キー、最大 3 子）を使用しています。</p>
+  </div>
+
+  <div class="info-panel">
+    <div class="info-section">
+      <div class="info-title">シナリオ</div>
+      <div class="scenario-desc" id="scenarioDesc"></div>
+    </div>
+    <div class="info-section">
+      <div class="info-title">ステップ説明</div>
+      <div class="step-explain" id="stepExplain"></div>
+    </div>
+
+    <div class="legend">
+      <div class="info-title">凡例</div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(9,105,218,0.08);border:2px solid #0969da;"></div>
+        比較・訪問中
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(26,127,55,0.1);border:2px solid #1a7f37;"></div>
+        発見 / 挿入完了
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(207,34,46,0.06);border:2px solid #cf222e;stroke-dasharray:4,3;"></div>
+        オーバーフロー（分割前）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(130,80,223,0.08);border:2px solid #8250df;"></div>
+        新規作成 / 変更
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="controls-row">
+        <button class="btn" id="btnPrev" onclick="prevStep()">◀ 前へ</button>
+        <button class="btn primary" id="btnNext" onclick="nextStep()">次へ ▶</button>
+      </div>
+      <div class="controls-row">
+        <button class="btn" id="btnAuto" onclick="toggleAuto()">▶ 自動再生</button>
+        <button class="btn" onclick="resetScenario()">↺ リセット</button>
+      </div>
+      <div class="step-counter" id="stepCounter">ステップ: 1 / 1</div>
+      <div class="step-dots" id="stepDots"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// SVG helpers
+// ============================================================
+const svgNS = 'http://www.w3.org/2000/svg';
+
+function svgEl(tag, attrs, text) {
+  const e = document.createElementNS(svgNS, tag);
+  if (attrs) Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, String(v)));
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+// ============================================================
+// Tree Rendering
+// ============================================================
+const KW = 52;   // width per key slot
+const NP = 12;   // horizontal padding per side
+const NH = 38;   // node height
+const NR = 7;    // border radius
+
+const COLORS = {
+  default:  { fill: '#f6f8fa',                stroke: '#d0d7de',  text: '#1f2328', sw: 1.5, dash: null },
+  visiting: { fill: 'rgba(9,105,218,0.08)',   stroke: '#0969da',  text: '#0550ae', sw: 2,   dash: null },
+  found:    { fill: 'rgba(26,127,55,0.1)',    stroke: '#1a7f37',  text: '#1a7f37', sw: 2,   dash: null },
+  new:      { fill: 'rgba(130,80,223,0.08)',  stroke: '#8250df',  text: '#6639ba', sw: 2,   dash: null },
+  overflow: { fill: 'rgba(207,34,46,0.06)',   stroke: '#cf222e',  text: '#cf222e', sw: 2,   dash: '5,3' },
+  promoted: { fill: 'rgba(26,127,55,0.14)',   stroke: '#1a7f37',  text: '#1a7f37', sw: 2,   dash: null },
+  dim:      { fill: '#fafbfc',                stroke: '#e4e9ed',  text: '#9ca3af', sw: 1,   dash: null },
+};
+
+function nodeWidth(keys) { return keys.length * KW + NP * 2; }
+
+function renderTreeSnapshot(snapshot) {
+  const svg = document.getElementById('treeSvg');
+  svg.innerHTML = '';
+
+  const nodeMap = {};
+  snapshot.nodes.forEach(n => { nodeMap[n.id] = n; });
+
+  // ── Edges ──────────────────────────────────────────────────
+  const edgeG = svgEl('g');
+  (snapshot.edges || []).forEach(([pid, cid]) => {
+    const p = nodeMap[pid], c = nodeMap[cid];
+    if (!p || !c) return;
+    edgeG.appendChild(svgEl('line', {
+      x1: p.x, y1: p.y + NH / 2,
+      x2: c.x, y2: c.y - NH / 2,
+      stroke: '#c8d0d9', 'stroke-width': 1.5
+    }));
+  });
+  svg.appendChild(edgeG);
+
+  // ── Nodes ──────────────────────────────────────────────────
+  snapshot.nodes.forEach(node => {
+    const c = COLORS[node.state] || COLORS.default;
+    const w = nodeWidth(node.keys);
+    const nx = node.x - w / 2;
+    const ny = node.y - NH / 2;
+    const g = svgEl('g');
+
+    // Background rect
+    const rAttrs = { x: nx, y: ny, width: w, height: NH, rx: NR,
+      fill: c.fill, stroke: c.stroke, 'stroke-width': c.sw };
+    if (c.dash) rAttrs['stroke-dasharray'] = c.dash;
+    g.appendChild(svgEl('rect', rAttrs));
+
+    node.keys.forEach((key, i) => {
+      const kx = nx + NP + KW * i;    // left edge of key slot
+      const kcx = kx + KW / 2;        // center x of key slot
+
+      // Divider (between adjacent keys)
+      if (i > 0) {
+        g.appendChild(svgEl('line', {
+          x1: kx, y1: ny + 7, x2: kx, y2: ny + NH - 7,
+          stroke: c.stroke, 'stroke-width': 0.8, opacity: 0.55
+        }));
+      }
+
+      // Key highlight background
+      if (node.highlightKeys && node.highlightKeys.includes(i)) {
+        g.appendChild(svgEl('rect', {
+          x: kx + 3, y: ny + 5, width: KW - 6, height: NH - 10, rx: 4,
+          fill: 'rgba(9,105,218,0.18)'
+        }));
+      }
+
+      // Key text
+      g.appendChild(svgEl('text', {
+        x: kcx, y: node.y + 5.5,
+        'text-anchor': 'middle',
+        'font-size': 14, 'font-weight': 600,
+        'font-family': 'Fira Code, Consolas, monospace',
+        fill: c.text
+      }, String(key)));
+    });
+
+    svg.appendChild(g);
+  });
+
+  // ── Optional annotations ───────────────────────────────────
+  (snapshot.annots || []).forEach(({ text, x, y, color, size }) => {
+    svg.appendChild(svgEl('text', {
+      x, y, 'text-anchor': 'middle',
+      'font-size': size || 11,
+      'font-family': '"Noto Sans", sans-serif',
+      fill: color || '#8c949e'
+    }, text));
+  });
+
+  // ── Promotion arrow (for split step) ──────────────────────
+  if (snapshot.arrow) {
+    const { x1, y1, x2, y2, color } = snapshot.arrow;
+    const c2 = color || '#1a7f37';
+    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
+    const ux = dx / len, uy = dy / len;
+    const AL = 10, AW = 5;
+    const ex = x2 - ux * AL, ey = y2 - uy * AL;
+    svg.appendChild(svgEl('line', { x1, y1, x2: ex, y2: ey,
+      stroke: c2, 'stroke-width': 2, 'stroke-dasharray': '5,3' }));
+    svg.appendChild(svgEl('polygon', {
+      points: `${x2},${y2} ${ex - uy * AW},${ey + ux * AW} ${ex + uy * AW},${ey - ux * AW}`,
+      fill: c2
+    }));
+  }
+}
+
+// ============================================================
+// Scenario data helpers
+// ============================================================
+const nd = (id, keys, x, y, state, highlightKeys) =>
+  ({ id, keys, x, y, state: state || 'default', highlightKeys });
+
+const EDGES_2NODE  = [['root','left'], ['root','right']];
+const EDGES_3NODE  = [['root','left'], ['root','mid'], ['root','right']];
+
+// Initial tree: root[30], left[10], right[40,50]
+const INIT_NODES = () => [
+  nd('root', [30],    350, 70),
+  nd('left', [10],    175, 190),
+  nd('right',[40,50], 525, 190),
+];
+
+// Tree after inserting 25 into left leaf: left becomes [10,25]
+const POST25_NODES = () => [
+  nd('root', [30],    350, 70),
+  nd('left', [10,25], 175, 190),
+  nd('right',[40,50], 525, 190),
+];
+
+// Final split result: root[30,45], children [10,25],[40],[50]
+const SPLIT_NODES = () => [
+  nd('root',  [30,45], 350, 70),
+  nd('left',  [10,25], 175, 190),
+  nd('mid',   [40],    350, 190),
+  nd('right', [50],    525, 190),
+];
+
+const s = (nodes, edges, explain, extra) =>
+  Object.assign({ nodes, edges, explain }, extra || {});
+
+// ============================================================
+// Scenarios
+// ============================================================
+const SCENARIOS = [
+  // ─────────────── ① 検索 ───────────────
+  {
+    name: "① 検索",
+    description: "B-Tree でキー <code>40</code> を検索します。<br><br>ルートから出発し、各ノードのキーと比較しながら適切な子へ降ります。時間計算量は <code>O(log n)</code> です。",
+    steps: [
+      s(INIT_NODES(), EDGES_2NODE,
+        "次数 3 の B-Tree です。各ノードに最大 <strong>2 キー</strong>を格納できます。<span class='hl-blue'>key = 40</span> を検索します。ルートから開始します。"),
+
+      s([nd('root',[30],350,70,'visiting'), nd('left',[10],175,190,'default'), nd('right',[40,50],525,190,'default')],
+        EDGES_2NODE,
+        "ルートノード <span class='hl-blue'>[30]</span> を確認。<br>40 > 30 → <strong>右の子</strong>へ進みます。"),
+
+      s([nd('root',[30],350,70,'dim'), nd('left',[10],175,190,'dim'), nd('right',[40,50],525,190,'visiting',[0])],
+        EDGES_2NODE,
+        "ノード <span class='hl-blue'>[40, 50]</span> を確認。<br>先頭のキー <span class='hl-blue'>40</span> と比較: 40 == 40 → <strong>一致！</strong>"),
+
+      s([nd('root',[30],350,70,'dim'), nd('left',[10],175,190,'dim'), nd('right',[40,50],525,190,'found',[0])],
+        EDGES_2NODE,
+        "<span class='hl-green'>key = 40 を発見しました！</span><br>ルートから 2 回の比較のみで到達。B-Tree の深さは <code>O(log n)</code> に保たれます。"),
+    ]
+  },
+
+  // ─────────────── ② 挿入（分割なし） ───────────────
+  {
+    name: "② 挿入",
+    description: "B-Tree にキー <code>25</code> を挿入します。<br><br>挿入先の葉ノードに空きがあれば、そのまま追加します。ノードが満杯の場合の分割はシナリオ③で確認できます。",
+    steps: [
+      s(INIT_NODES(), EDGES_2NODE,
+        "<span class='hl-blue'>key = 25</span> を挿入します。まず挿入位置となる葉ノードを探します（検索と同じ手順）。"),
+
+      s([nd('root',[30],350,70,'visiting'), nd('left',[10],175,190,'default'), nd('right',[40,50],525,190,'default')],
+        EDGES_2NODE,
+        "ルートノード <span class='hl-blue'>[30]</span> を確認。<br>25 < 30 → <strong>左の子</strong>へ進みます。"),
+
+      s([nd('root',[30],350,70,'dim'), nd('left',[10],175,190,'visiting'), nd('right',[40,50],525,190,'dim')],
+        EDGES_2NODE,
+        "葉ノード <span class='hl-blue'>[10]</span> に到達。<br>現在 1 キー / 最大 2 キー → <span class='hl-green'>空きあり</span>。<br>ソート順を維持して挿入します。"),
+
+      s([nd('root',[30],350,70,'default'), nd('left',[10,25],175,190,'new'), nd('right',[40,50],525,190,'default')],
+        EDGES_2NODE,
+        "<span class='hl-green'>挿入完了！</span> 葉ノードが <span class='hl-purple'>[10, 25]</span> になりました。<br>ノード分割は発生せず、ツリーの高さも変わりません。"),
+    ]
+  },
+
+  // ─────────────── ③ 挿入 + ノード分割 ───────────────
+  {
+    name: "③ 挿入 + 分割",
+    description: "B-Tree にキー <code>45</code> を挿入します。<br><br>挿入先の葉ノードが満杯（2/2）のため<strong>ノード分割</strong>が発生します。中央キーが親に<strong>昇格</strong>し、ノードが 2 つに分かれます。",
+    steps: [
+      s(POST25_NODES(), EDGES_2NODE,
+        "<span class='hl-blue'>key = 45</span> を挿入します。現在の右葉 [40, 50] は <strong>満杯（2/2）</strong>です。"),
+
+      s([nd('root',[30],350,70,'visiting'), nd('left',[10,25],175,190,'default'), nd('right',[40,50],525,190,'default')],
+        EDGES_2NODE,
+        "ルートノード <span class='hl-blue'>[30]</span> を確認。<br>45 > 30 → <strong>右の子</strong>へ進みます。"),
+
+      s([nd('root',[30],350,70,'dim'), nd('left',[10,25],175,190,'dim'), nd('right',[40,50],525,190,'visiting')],
+        EDGES_2NODE,
+        "葉ノード <span class='hl-blue'>[40, 50]</span> に到達。<br>すでに 2 キー（満杯）。ここに 45 を挿入すると <span class='hl-red'>オーバーフロー</span>が発生します！"),
+
+      s([nd('root',[30],350,70,'dim'), nd('left',[10,25],175,190,'dim'), nd('right',[40,45,50],525,190,'overflow')],
+        EDGES_2NODE,
+        "一時的に <span class='hl-red'>[40, 45, 50]</span> の 3 キーノードを作成。<br>中央キー <strong>45</strong> を親ノードに<strong>昇格</strong>させ、左右に分割します。",
+        { annots: [{ text: '↑ 昇格', x: 525, y: 155, color: '#cf222e', size: 12 }] }),
+
+      s([nd('root',[30,45],350,70,'new'), nd('left',[10,25],175,190,'dim'), nd('mid',[40],350,190,'new'), nd('right',[50],525,190,'new')],
+        EDGES_3NODE,
+        "分割完了！<br>• <span class='hl-purple'>45</span> が親ノードに昇格 → ルート = <span class='hl-purple'>[30, 45]</span><br>• 左の分割片 <span class='hl-purple'>[40]</span>（中央未満）<br>• 右の分割片 <span class='hl-purple'>[50]</span>（中央超）"),
+
+      s(SPLIT_NODES(), EDGES_3NODE,
+        "<span class='hl-green'>挿入完了！</span> B-Tree の性質が保たれています。<br>• 全葉が同じ深さ（高さ 2）<br>• 各ノード: 1〜2 キー<br>ルートが分割する場合はツリー高さが 1 増えます。"),
+    ]
+  }
+];
+
+// ============================================================
+// State & Controls
+// ============================================================
+let currentScenario = 0;
+let currentStep = 0;
+let autoTimer = null;
+
+function renderStep() {
+  const sc = SCENARIOS[currentScenario];
+  const step = sc.steps[currentStep];
+  renderTreeSnapshot(step);
+
+  const el = document.getElementById('stepExplain');
+  el.style.opacity = 0;
+  setTimeout(() => { el.innerHTML = step.explain || ''; el.style.opacity = 1; }, 100);
+
+  document.getElementById('btnPrev').disabled = currentStep === 0;
+  document.getElementById('btnNext').disabled = currentStep >= sc.steps.length - 1;
+  updateStepCounter();
+}
+
+function nextStep() {
+  const sc = SCENARIOS[currentScenario];
+  if (currentStep < sc.steps.length - 1) { currentStep++; renderStep(); }
+}
+
+function prevStep() {
+  if (currentStep > 0) { currentStep--; renderStep(); }
+}
+
+function resetScenario() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  currentStep = 0;
+  document.getElementById('btnAuto').textContent = '▶ 自動再生';
+  renderStep();
+}
+
+function toggleAuto() {
+  if (autoTimer) {
+    clearInterval(autoTimer); autoTimer = null;
+    document.getElementById('btnAuto').textContent = '▶ 自動再生';
+  } else {
+    document.getElementById('btnAuto').textContent = '⏸ 停止';
+    autoTimer = setInterval(() => {
+      const sc = SCENARIOS[currentScenario];
+      if (currentStep >= sc.steps.length - 1) {
+        clearInterval(autoTimer); autoTimer = null;
+        document.getElementById('btnAuto').textContent = '▶ 自動再生';
+        return;
+      }
+      nextStep();
+    }, 1400);
+  }
+}
+
+function selectScenario(idx) {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  currentScenario = idx;
+  currentStep = 0;
+  document.getElementById('btnAuto').textContent = '▶ 自動再生';
+  document.querySelectorAll('.tab-btn').forEach((btn, i) => btn.classList.toggle('active', i === idx));
+  document.getElementById('scenarioDesc').innerHTML = SCENARIOS[idx].description;
+  renderStep();
+}
+
+function updateStepCounter() {
+  const sc = SCENARIOS[currentScenario];
+  document.getElementById('stepCounter').textContent = `ステップ: ${currentStep + 1} / ${sc.steps.length}`;
+  const dots = document.getElementById('stepDots');
+  dots.innerHTML = '';
+  sc.steps.forEach((_, i) => {
+    const d = document.createElement('div');
+    d.className = 'step-dot' + (i < currentStep ? ' done' : i === currentStep ? ' current' : '');
+    dots.appendChild(d);
+  });
+}
+
+// ============================================================
+// Init
+// ============================================================
+(function init() {
+  const tabBar = document.getElementById('tabBar');
+  SCENARIOS.forEach((sc, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'tab-btn' + (i === 0 ? ' active' : '');
+    btn.textContent = sc.name;
+    btn.onclick = () => selectScenario(i);
+    tabBar.appendChild(btn);
+  });
+  document.getElementById('scenarioDesc').innerHTML = SCENARIOS[0].description;
+  renderStep();
+})();
+</script>
+</body>
+</html>

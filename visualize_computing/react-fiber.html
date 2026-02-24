@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React Fiber & Reconciliation 可視化</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #ffffff; --surface: #f6f8fa; --surface2: #eaeef2;
+      --border: #d0d7de; --text: #1f2328; --text-muted: #636c76;
+      --green: #1a7f37; --blue: #0969da; --purple: #8250df;
+      --orange: #bc4c00; --red: #cf222e; --yellow: #9a6700;
+    }
+    body { background:var(--bg); color:var(--text); font-family:"Noto Sans","Helvetica Neue",Helvetica,Arial,sans-serif; font-size:14px; min-height:100vh; display:flex; flex-direction:column; }
+    .back-link { font-size:.75rem; color:var(--text-muted); text-decoration:none; margin-left:auto; display:flex; align-items:center; gap:4px; transition:color .15s; }
+    .back-link:hover { color:var(--text); }
+    header { padding:16px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; background:var(--surface); }
+    header h1 { font-size:1.2rem; font-weight:700; color:var(--text); }
+    .badge { background:rgba(130,80,223,.1); color:var(--purple); border:1px solid rgba(130,80,223,.3); font-size:.7rem; font-weight:700; padding:2px 8px; border-radius:12px; }
+    .tabs { display:flex; padding:0 24px; border-bottom:1px solid var(--border); background:var(--surface); }
+    .tab { padding:10px 16px; font-size:.82rem; font-weight:600; cursor:pointer; background:none; border:none; border-bottom:2px solid transparent; color:var(--text-muted); transition:all .15s; margin-bottom:-1px; }
+    .tab.active { color:var(--blue); border-bottom-color:var(--blue); }
+    .main { flex:1; display:grid; grid-template-columns:1fr 220px; }
+    .svg-container { padding:16px; display:flex; flex-direction:column; gap:8px; min-height:0; }
+    #mainSvg { width:100%; flex:1; border:1px solid var(--border); border-radius:8px; background:#fafbfc; }
+    .info-panel { border-left:1px solid var(--border); padding:14px; background:var(--surface); display:flex; flex-direction:column; gap:12px; overflow-y:auto; }
+    .info-section-title { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); margin-bottom:6px; }
+    .phase-box { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px; }
+    .phase-value { font-size:.88rem; font-weight:700; color:var(--text); margin-top:4px; }
+    .phase-value.render   { color:var(--blue); }
+    .phase-value.commit   { color:var(--orange); }
+    .phase-value.done     { color:var(--green); }
+    .phase-value.sched    { color:var(--purple); }
+    .legend { display:flex; flex-direction:column; gap:5px; }
+    .legend-item { display:flex; align-items:center; gap:7px; font-size:.75rem; color:var(--text-muted); }
+    .ldot { width:13px; height:13px; border-radius:50%; border:2px solid; flex-shrink:0; }
+    .ldot.keep   { background:#d1f0db; border-color:#1a7f37; }
+    .ldot.update { background:#fff3cd; border-color:#e6a817; }
+    .ldot.create { background:#ede9fe; border-color:#8250df; }
+    .ldot.normal { background:#e6eef6; border-color:#a0b8d0; }
+    .lrect { width:20px; height:13px; border-radius:3px; border:2px solid; flex-shrink:0; }
+    .lrect.ub { background:rgba(188,76,0,0.15); border-color:#bc4c00; }
+    .lrect.nm { background:rgba(9,105,218,0.1); border-color:#0969da; }
+    .lrect.lo { background:#f6f8fa; border-color:#d0d7de; }
+    .stats-box { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .stat-item { display:flex; flex-direction:column; gap:2px; }
+    .stat-num { font-size:1.2rem; font-weight:700; }
+    .stat-lbl { font-size:.68rem; color:var(--text-muted); }
+    .explanation { padding:10px 24px; background:var(--surface); border-top:1px solid var(--border); font-size:.82rem; color:var(--text); min-height:44px; line-height:1.6; }
+    .controls { display:flex; align-items:center; gap:8px; padding:10px 24px; background:var(--surface); border-top:1px solid var(--border); }
+    .btn { padding:6px 14px; border-radius:6px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:.82rem; cursor:pointer; transition:all .15s; display:flex; align-items:center; gap:5px; font-weight:500; }
+    .btn:hover { background:var(--surface2); }
+    .btn.primary { background:var(--blue); color:#fff; border-color:var(--blue); font-weight:700; }
+    .btn.primary:hover { background:#0550ae; }
+    .btn:disabled { opacity:.4; cursor:not-allowed; }
+    .speed-ctrl { display:flex; align-items:center; gap:8px; margin-left:auto; font-size:.78rem; color:var(--text-muted); }
+    .speed-ctrl input { width:90px; accent-color:var(--blue); }
+    .step-lbl { font-size:.75rem; color:var(--text-muted); }
+    .hl-g { color:var(--green); font-weight:700; }
+    .hl-b { color:var(--blue); font-weight:700; }
+    .hl-o { color:var(--orange); font-weight:700; }
+    .hl-p { color:var(--purple); font-weight:700; }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="10" stroke="#8250df" stroke-width="2"/>
+    <path d="M8 9 C8 6 16 6 16 9 C16 12 12 12 12 12 C12 12 12 12 12 15" stroke="#8250df" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+    <circle cx="12" cy="18" r="1.2" fill="#8250df"/>
+  </svg>
+  <h1>React Fiber & Reconciliation 可視化</h1>
+  <span class="badge">Interactive</span>
+  <a class="back-link" href="index.html">
+    <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/></svg>
+    一覧へ戻る
+  </a>
+</header>
+
+<div class="tabs">
+  <button class="tab active" id="tab0" onclick="setTab(0)">Reconciliation</button>
+  <button class="tab" id="tab1" onclick="setTab(1)">Fiber スケジューラ</button>
+</div>
+
+<div class="main">
+  <div class="svg-container">
+    <svg id="mainSvg" viewBox="0 0 680 290"></svg>
+  </div>
+  <div class="info-panel">
+    <div class="phase-box">
+      <div class="info-section-title">現在のフェーズ</div>
+      <div class="phase-value" id="phaseVal">待機中</div>
+    </div>
+    <div>
+      <div class="info-section-title">凡例</div>
+      <div class="legend" id="legend0">
+        <div class="legend-item"><span class="ldot normal"></span>未比較</div>
+        <div class="legend-item"><span class="ldot keep"></span>変更なし</div>
+        <div class="legend-item"><span class="ldot update"></span>更新 (UPDATE)</div>
+        <div class="legend-item"><span class="ldot create"></span>新規 (CREATE)</div>
+      </div>
+      <div class="legend" id="legend1" style="display:none">
+        <div class="legend-item"><span class="lrect ub"></span>UserBlocking</div>
+        <div class="legend-item"><span class="lrect nm"></span>Normal</div>
+        <div class="legend-item"><span class="lrect lo"></span>Low</div>
+      </div>
+    </div>
+    <div class="stats-box">
+      <div class="stat-item">
+        <span class="stat-num" style="color:var(--green)" id="statA">—</span>
+        <span class="stat-lbl" id="statALbl">変更なし</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-num" style="color:var(--orange)" id="statB">—</span>
+        <span class="stat-lbl" id="statBLbl">更新/新規</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="explanation" id="expText">タブを選択して「次のステップ」または「自動再生」を押してください。</div>
+
+<div class="controls">
+  <button class="btn primary" id="btnPlay" onclick="nextStep()">▶ 次のステップ</button>
+  <button class="btn" id="btnAuto" onclick="toggleAuto()">↻ 自動再生</button>
+  <button class="btn" onclick="resetViz()">⟳ リセット</button>
+  <span class="step-lbl" id="stepLbl">0 / 0</span>
+  <div class="speed-ctrl">
+    速度: <input type="range" id="spd" min="300" max="2000" value="900" step="100" oninput="onSpeed()">
+    <span id="spdLbl">0.9s</span>
+  </div>
+</div>
+
+<script>
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const R = 20;
+
+// ─── Tree data ─────────────────────────────────────────────
+const OLD_NODES = [
+  {id:'oApp',    label:'App',    sub:'',            x:170, y:40,  parent:null},
+  {id:'oHeader', label:'Header', sub:'title="Hi"',  x:75,  y:120, parent:'oApp'},
+  {id:'oul',     label:'ul',     sub:'',             x:170, y:120, parent:'oApp'},
+  {id:'oFooter', label:'Footer', sub:'',             x:265, y:120, parent:'oApp'},
+  {id:'oli1',    label:'li',     sub:'key=1 "A"',    x:118, y:205, parent:'oul'},
+  {id:'oli2',    label:'li',     sub:'key=2 "B"',    x:222, y:205, parent:'oul'},
+];
+
+const NEW_NODES = [
+  {id:'nApp',    label:'App',    sub:'',             x:510, y:40,  parent:null},
+  {id:'nHeader', label:'Header', sub:'title="Hi"',   x:415, y:120, parent:'nApp'},
+  {id:'nul',     label:'ul',     sub:'',             x:510, y:120, parent:'nApp'},
+  {id:'nFooter', label:'Footer', sub:'',             x:605, y:120, parent:'nApp'},
+  {id:'nli1',    label:'li',     sub:'key=1 "A"',    x:450, y:205, parent:'nul'},
+  {id:'nli2',    label:'li',     sub:'key=2 "B*"',   x:510, y:205, parent:'nul'},
+  {id:'nli3',    label:'li',     sub:'key=3 "C" NEW', x:570, y:205, parent:'nul'},
+];
+
+// ─── Reconciliation Steps ──────────────────────────────────
+const RECON_STEPS = [
+  {ph:'', oA:null, nA:null, res:{},
+   text:'コンポーネントのstateが変化し、Reactが<b>新しいVDOMツリー</b>を生成しました。<b>左: 変更前</b>、<b>右: 変更後</b>。ReactはルートからDiff(差分検出)を開始します。'},
+
+  {ph:'Render', oA:'oApp', nA:'nApp', res:{},
+   text:'ルートから比較開始。<b>&lt;App&gt;</b> vs <b>&lt;App&gt;</b> — 同じコンポーネント型なのでインスタンスを再利用。propsを比較します。'},
+  {ph:'Render', oA:'oApp', nA:'nApp', res:{oApp:'keep', nApp:'keep'},
+   text:'<b>&lt;App&gt;</b>のpropsに変更なし → <span class="hl-g">KEEP</span>。子要素の比較へ進みます（深さ優先）。'},
+
+  {ph:'Render', oA:'oHeader', nA:'nHeader', res:{oApp:'keep', nApp:'keep'},
+   text:'子[0]: <b>&lt;Header&gt;</b> vs <b>&lt;Header&gt;</b>。同じ型、props(title="Hi")も同一 →'},
+  {ph:'Render', oA:'oHeader', nA:'nHeader', res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep'},
+   text:'<b>&lt;Header&gt;</b> → <span class="hl-g">KEEP</span>。DOM操作不要。'},
+
+  {ph:'Render', oA:'oul', nA:'nul', res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep'},
+   text:'子[1]: <b>&lt;ul&gt;</b> vs <b>&lt;ul&gt;</b>。同じ型 →'},
+  {ph:'Render', oA:'oul', nA:'nul', res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep', oul:'keep', nul:'keep'},
+   text:'<b>&lt;ul&gt;</b> → <span class="hl-g">KEEP</span>。次に子リストをkey属性で突合します。'},
+
+  {ph:'Render', oA:'oFooter', nA:'nFooter', res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep', oul:'keep', nul:'keep'},
+   text:'子[2]: <b>&lt;Footer&gt;</b> vs <b>&lt;Footer&gt;</b>。変更なし →'},
+  {ph:'Render', oA:'oFooter', nA:'nFooter', res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep', oul:'keep', nul:'keep', oFooter:'keep', nFooter:'keep'},
+   text:'<b>&lt;Footer&gt;</b> → <span class="hl-g">KEEP</span>。'},
+
+  {ph:'Render', oA:'oli1', nA:'nli1', res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep', oul:'keep', nul:'keep', oFooter:'keep', nFooter:'keep'},
+   text:'ulの子リストをkeyで突合。<b>key=1</b>: 旧li("A") vs 新li("A") — 同じkey、同じprops →'},
+  {ph:'Render', oA:'oli1', nA:'nli1', res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep', oul:'keep', nul:'keep', oFooter:'keep', nFooter:'keep', oli1:'keep', nli1:'keep'},
+   text:'<b>key=1 li</b> → <span class="hl-g">KEEP</span>。内容変更なし。'},
+
+  {ph:'Render', oA:'oli2', nA:'nli2', res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep', oul:'keep', nul:'keep', oFooter:'keep', nFooter:'keep', oli1:'keep', nli1:'keep'},
+   text:'<b>key=2</b>: 旧li("B") vs 新li("B*") — 同じkeyと型だが<b>テキストが変わっている</b> →'},
+  {ph:'Render', oA:'oli2', nA:'nli2', res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep', oul:'keep', nul:'keep', oFooter:'keep', nFooter:'keep', oli1:'keep', nli1:'keep', oli2:'update', nli2:'update'},
+   text:'<b>key=2 li</b> → <span class="hl-o">UPDATE</span>。textContent変更をキューに追加。'},
+
+  {ph:'Render', oA:null, nA:'nli3', res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep', oul:'keep', nul:'keep', oFooter:'keep', nFooter:'keep', oli1:'keep', nli1:'keep', oli2:'update', nli2:'update'},
+   text:'<b>key=3</b>: 旧ツリーにkey=3のliが存在しない → 新規要素！'},
+  {ph:'Render', oA:null, nA:'nli3', res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep', oul:'keep', nul:'keep', oFooter:'keep', nFooter:'keep', oli1:'keep', nli1:'keep', oli2:'update', nli2:'update', nli3:'create'},
+   text:'<b>key=3 li</b> → <span class="hl-p">CREATE</span>。新DOMノードの作成をキューに追加。'},
+
+  {ph:'Commit', oA:null, nA:null, res:{oApp:'keep', nApp:'keep', oHeader:'keep', nHeader:'keep', oul:'keep', nul:'keep', oFooter:'keep', nFooter:'keep', oli1:'keep', nli1:'keep', oli2:'update', nli2:'update', nli3:'create'},
+   text:'<span class="hl-o">Commitフェーズ</span>: Renderフェーズで計算した差分を実際のDOMへ適用します。① key=2 liのtextContent更新 ② key=3 liの新規挿入 — DOM操作はわずか2つ！'},
+
+  {ph:'完了', oA:null, nA:null, res:{oApp:'done', nApp:'done', oHeader:'done', nHeader:'done', oul:'done', nul:'done', oFooter:'done', nFooter:'done', oli1:'done', nli1:'done', oli2:'done', nli2:'done', nli3:'done'},
+   text:'Reconciliation完了。<span class="hl-g">変更なし: 5ノード</span>、<span class="hl-o">UPDATE: 1</span>、<span class="hl-p">CREATE: 1</span>。最小限のDOM操作でUIが更新されました。'},
+];
+
+// ─── Fiber Scheduler Steps ─────────────────────────────────
+const FIBER_STEPS = [
+  {ph:'', exec:null, items:[
+     {id:'f1', label:'Fiber: ComponentA 描画', pri:'Normal', status:'pending'},
+     {id:'f2', label:'Fiber: ComponentB 描画', pri:'Normal', status:'pending'},
+     {id:'f3', label:'Fiber: ComponentC 描画', pri:'Normal', status:'pending'},
+     {id:'f4', label:'Fiber: ComponentD 描画', pri:'Normal', status:'pending'},
+   ],
+   text:'Reactはレンダリング作業を<b>Fiber</b>という作業単位に分割します。各Fiberは1つのコンポーネントに対応し、スケジューラが優先度に応じて実行順を決定します。'},
+
+  {ph:'Normal描画中', exec:'f2', items:[
+     {id:'f1', label:'Fiber: ComponentA 描画', pri:'Normal', status:'done'},
+     {id:'f2', label:'Fiber: ComponentB 描画', pri:'Normal', status:'running'},
+     {id:'f3', label:'Fiber: ComponentC 描画', pri:'Normal', status:'pending'},
+     {id:'f4', label:'Fiber: ComponentD 描画', pri:'Normal', status:'pending'},
+   ],
+   text:'スケジューラがNormal優先度のFiberを順番に処理中。A完了、B処理中。各Fiber終了後にスケジューラは「より高優先度の仕事が来ていないか？」を確認します。'},
+
+  {ph:'割り込み発生！', exec:null, items:[
+     {id:'f1', label:'Fiber: ComponentA 描画', pri:'Normal', status:'done'},
+     {id:'f2', label:'Fiber: ComponentB 描画', pri:'Normal', status:'paused'},
+     {id:'f3', label:'Fiber: ComponentC 描画', pri:'Normal', status:'pending'},
+     {id:'f4', label:'Fiber: ComponentD 描画', pri:'Normal', status:'pending'},
+     {id:'u1', label:'Fiber: ユーザー入力 (ボタンクリック)', pri:'UserBlocking', status:'queued'},
+   ],
+   text:'ユーザーがボタンをクリック！<span class="hl-o">UserBlocking</span>優先度の作業が割り込みました。スケジューラはNormal描画を<b>一時停止</b>します。Bの途中まで行った作業は廃棄されます。'},
+
+  {ph:'高優先度処理中', exec:'u1', items:[
+     {id:'u1', label:'Fiber: ユーザー入力 (ボタンクリック)', pri:'UserBlocking', status:'running'},
+     {id:'f1', label:'Fiber: ComponentA 描画', pri:'Normal', status:'done'},
+     {id:'f2', label:'Fiber: ComponentB 描画', pri:'Normal', status:'paused'},
+     {id:'f3', label:'Fiber: ComponentC 描画', pri:'Normal', status:'pending'},
+     {id:'f4', label:'Fiber: ComponentD 描画', pri:'Normal', status:'pending'},
+   ],
+   text:'<span class="hl-o">UserBlocking</span>のFiberを優先実行！ユーザーへの応答(ボタン状態の更新など)を即座に処理します。Normal作業は待機中。'},
+
+  {ph:'高優先度完了', exec:null, items:[
+     {id:'u1', label:'Fiber: ユーザー入力 (ボタンクリック)', pri:'UserBlocking', status:'done'},
+     {id:'f1', label:'Fiber: ComponentA 描画', pri:'Normal', status:'done'},
+     {id:'f2', label:'Fiber: ComponentB 描画', pri:'Normal', status:'paused'},
+     {id:'f3', label:'Fiber: ComponentC 描画', pri:'Normal', status:'pending'},
+     {id:'f4', label:'Fiber: ComponentD 描画', pri:'Normal', status:'pending'},
+   ],
+   text:'UserBlocking処理が<span class="hl-g">完了</span>。ユーザーへの即座な応答が完了しました。次にNormal描画を再開します。'},
+
+  {ph:'Normal再開', exec:'f2', items:[
+     {id:'f1', label:'Fiber: ComponentA 描画', pri:'Normal', status:'done'},
+     {id:'f2', label:'Fiber: ComponentB 描画', pri:'Normal', status:'running'},
+     {id:'f3', label:'Fiber: ComponentC 描画', pri:'Normal', status:'pending'},
+     {id:'f4', label:'Fiber: ComponentD 描画', pri:'Normal', status:'pending'},
+   ],
+   text:'スケジューラがNormal描画を<span class="hl-b">再開</span>。BはRender関数を最初から再実行します（Render関数は副作用のない純粋関数であるべき、という設計の理由の一つです）。'},
+
+  {ph:'完了', exec:null, items:[
+     {id:'f1', label:'Fiber: ComponentA 描画', pri:'Normal', status:'done'},
+     {id:'f2', label:'Fiber: ComponentB 描画', pri:'Normal', status:'done'},
+     {id:'f3', label:'Fiber: ComponentC 描画', pri:'Normal', status:'done'},
+     {id:'f4', label:'Fiber: ComponentD 描画', pri:'Normal', status:'done'},
+   ],
+   text:'全Fiberが完了！<span class="hl-b">Commitフェーズ</span>でDOMに反映します。<br>ポイント：UserBlocking ≦ 100ms、Normal ≦ 500ms の時間予算でスケジューリング。重い描画中もUIはブロックされません。'},
+];
+
+// ─── State ─────────────────────────────────────────────────
+let currentTab = 0;
+let stepIdx = 0;
+let autoTimer = null;
+let isAuto = false;
+
+// ─── SVG helpers ───────────────────────────────────────────
+const svg = () => document.getElementById('mainSvg');
+
+function el(tag, attrs) {
+  const e = document.createElementNS(SVG_NS, tag);
+  Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, v));
+  return e;
+}
+
+function svgText(parent, txt, x, y, opts = {}) {
+  const t = el('text', {
+    x, y,
+    'text-anchor': opts.anchor || 'middle',
+    'font-size': opts.size || '0.75rem',
+    fill: opts.fill || '#636c76',
+    'font-weight': opts.weight || 'normal',
+    'font-family': 'Noto Sans,sans-serif',
+  });
+  t.textContent = txt;
+  parent.appendChild(t);
+  return t;
+}
+
+// ─── Node colors ───────────────────────────────────────────
+const NC = {
+  normal: {fill:'#e6eef6', stroke:'#a0b8d0', text:'#636c76'},
+  active: {fill:'#dbeafe', stroke:'#0969da', text:'#0550ae'},
+  keep:   {fill:'#d1f0db', stroke:'#1a7f37', text:'#1a7f37'},
+  update: {fill:'#fff3cd', stroke:'#e6a817', text:'#9a6700'},
+  create: {fill:'#ede9fe', stroke:'#8250df', text:'#6639ba'},
+  done:   {fill:'#f0fdf4', stroke:'#86efac', text:'#2a8a3b'},
+};
+const BADGE = {keep:'✓', update:'↑', create:'+', done:'✓'};
+
+// ─── Reconciliation render ─────────────────────────────────
+function renderRecon(step) {
+  const s = svg();
+  s.innerHTML = '';
+
+  // Panel backgrounds
+  s.appendChild(el('rect', {x:2, y:2, width:336, height:285, rx:8, fill:'rgba(9,105,218,0.03)', stroke:'rgba(9,105,218,0.18)', 'stroke-width':'1', 'stroke-dasharray':'5,4'}));
+  svgText(s, '変更前 VDOM', 170, 17, {size:'0.63rem', fill:'rgba(9,105,218,0.6)', weight:'bold'});
+  s.appendChild(el('rect', {x:342, y:2, width:336, height:285, rx:8, fill:'rgba(130,80,223,0.03)', stroke:'rgba(130,80,223,0.18)', 'stroke-width':'1', 'stroke-dasharray':'5,4'}));
+  svgText(s, '変更後 VDOM', 510, 17, {size:'0.63rem', fill:'rgba(130,80,223,0.6)', weight:'bold'});
+
+  const oMap = {}, nMap = {};
+  OLD_NODES.forEach(n => { oMap[n.id] = n; });
+  NEW_NODES.forEach(n => { nMap[n.id] = n; });
+
+  // Edges — old tree
+  OLD_NODES.forEach(n => {
+    if (!n.parent) return;
+    const p = oMap[n.parent];
+    s.appendChild(el('line', {x1:p.x, y1:p.y+R, x2:n.x, y2:n.y-R, stroke:'#d0d7de', 'stroke-width':'1.5'}));
+  });
+  // Edges — new tree
+  NEW_NODES.forEach(n => {
+    if (!n.parent) return;
+    const p = nMap[n.parent];
+    s.appendChild(el('line', {x1:p.x, y1:p.y+R, x2:n.x, y2:n.y-R, stroke:'#d0d7de', 'stroke-width':'1.5'}));
+  });
+
+  // Comparison line
+  if (step.oA && step.nA) {
+    const o = oMap[step.oA], n = nMap[step.nA];
+    if (o && n) s.appendChild(el('line', {x1:o.x+R, y1:o.y, x2:n.x-R, y2:n.y, stroke:'#0969da', 'stroke-width':'1.5', 'stroke-dasharray':'6,3', opacity:'0.45'}));
+  } else if (step.nA && !step.oA) {
+    const n = nMap[step.nA];
+    if (n) s.appendChild(el('line', {x1:338, y1:n.y, x2:n.x-R, y2:n.y, stroke:'#8250df', 'stroke-width':'1.5', 'stroke-dasharray':'6,3', opacity:'0.45'}));
+  }
+
+  // Draw nodes
+  function drawNode(node, state) {
+    const c = NC[state] || NC.normal;
+    if (state === 'active') {
+      s.appendChild(el('circle', {cx:node.x, cy:node.y, r:R+5, fill:'none', stroke:'#0969da', 'stroke-width':'1.5', 'stroke-dasharray':'4,3', opacity:'0.55'}));
+    }
+    s.appendChild(el('circle', {cx:node.x, cy:node.y, r:R, fill:c.fill, stroke:c.stroke, 'stroke-width':'2'}));
+    svgText(s, node.label, node.x, node.y+4, {size:'0.72rem', fill:c.text, weight:'bold'});
+    if (node.sub) svgText(s, node.sub, node.x, node.y+R+11, {size:'0.58rem', fill:'#8c96a0'});
+    const badge = BADGE[state];
+    if (badge) {
+      s.appendChild(el('circle', {cx:node.x+R-3, cy:node.y-R+3, r:8, fill:c.stroke}));
+      svgText(s, badge, node.x+R-3, node.y-R+7, {size:'0.65rem', fill:'#fff', weight:'bold'});
+    }
+  }
+
+  OLD_NODES.forEach(n => drawNode(n, step.res[n.id] || (n.id === step.oA ? 'active' : 'normal')));
+  NEW_NODES.forEach(n => drawNode(n, step.res[n.id] || (n.id === step.nA ? 'active' : 'normal')));
+
+  const keepCount = Object.values(step.res).filter(v => v === 'keep' || v === 'done').length / 2;
+  const changeCount = Object.values(step.res).filter(v => v === 'update' || v === 'create').length;
+  document.getElementById('statA').textContent = keepCount > 0 ? Math.floor(keepCount) : '—';
+  document.getElementById('statB').textContent = changeCount > 0 ? changeCount : '—';
+}
+
+// ─── Fiber render ───────────────────────────────────────────
+const PC = {
+  UserBlocking: {fill:'rgba(188,76,0,0.1)', stroke:'#bc4c00', text:'#953800', badge:'#bc4c00', label:'UB'},
+  Normal:       {fill:'rgba(9,105,218,0.07)', stroke:'#0969da', text:'#0550ae', badge:'#0969da', label:'N'},
+  Low:          {fill:'rgba(99,108,118,0.07)', stroke:'#636c76', text:'#636c76', badge:'#636c76', label:'Lo'},
+};
+const STATUS_LBL = {pending:'待機中', running:'実行中 ▶', done:'完了 ✓', paused:'一時停止 ‖', queued:'割り込み待ち', interrupted:'中断'};
+const STATUS_DASH = {pending:'5,3', running:'none', done:'none', paused:'6,3', queued:'none', interrupted:'5,3'};
+
+function renderFiber(step) {
+  const s = svg();
+  s.innerHTML = '';
+
+  const IH = 38, IW = 604, IX = 36, gap = 7;
+  let y = 14;
+
+  step.items.forEach(item => {
+    const pc = PC[item.pri] || PC.Normal;
+    const dash = STATUS_DASH[item.status] || 'none';
+    const opacity = item.status === 'done' ? '0.38' : item.status === 'paused' ? '0.65' : '1';
+    const isRun = item.id === step.exec;
+
+    if (isRun) {
+      s.appendChild(el('rect', {x:IX-4, y:y-4, width:IW+8, height:IH+8, rx:10, fill:'none', stroke:'rgba(9,105,218,0.22)', 'stroke-width':'2.5'}));
+    }
+
+    const rect = el('rect', {x:IX, y, width:IW, height:IH, rx:7, fill:pc.fill, stroke:pc.stroke, 'stroke-width': isRun ? '2' : '1.5', opacity});
+    if (dash !== 'none') rect.setAttribute('stroke-dasharray', dash);
+    s.appendChild(rect);
+
+    // Priority badge
+    s.appendChild(el('rect', {x:IX+8, y:y+11, width:18, height:16, rx:3, fill:pc.badge, opacity}));
+    svgText(s, pc.label, IX+17, y+22, {size:'0.6rem', fill:'#fff', weight:'bold'});
+
+    // Label
+    svgText(s, item.label, IX+34, y+15, {anchor:'start', size:'0.8rem', fill:pc.text, weight:isRun?'bold':'normal'});
+
+    // Status
+    const stColor = item.status === 'done' ? '#1a7f37' : item.status === 'running' ? pc.text : '#8c96a0';
+    svgText(s, STATUS_LBL[item.status] || item.status, IX+IW-8, y+15, {anchor:'end', size:'0.7rem', fill:stColor, weight:isRun?'bold':'normal'});
+
+    y += IH + gap;
+  });
+
+  const doneCount = step.items.filter(i => i.status === 'done').length;
+  const remCount = step.items.filter(i => i.status !== 'done').length;
+  document.getElementById('statA').textContent = doneCount > 0 ? doneCount : '—';
+  document.getElementById('statB').textContent = remCount > 0 ? remCount : '—';
+}
+
+// ─── Controls ──────────────────────────────────────────────
+function getSteps() { return currentTab === 0 ? RECON_STEPS : FIBER_STEPS; }
+
+function nextStep() {
+  const steps = getSteps();
+  if (stepIdx >= steps.length) return;
+  const step = steps[stepIdx];
+
+  const pv = document.getElementById('phaseVal');
+  pv.className = 'phase-value';
+  if (step.ph) {
+    pv.textContent = step.ph;
+    if (step.ph.includes('Render'))   pv.classList.add('render');
+    else if (step.ph.includes('Commit')) pv.classList.add('commit');
+    else if (step.ph === '完了')      pv.classList.add('done');
+    else if (step.ph.includes('割り込み')) pv.classList.add('commit');
+    else if (step.ph.length > 0)      pv.classList.add('sched');
+  } else {
+    pv.textContent = '待機中';
+  }
+
+  document.getElementById('expText').innerHTML = step.text;
+  if (currentTab === 0) renderRecon(step); else renderFiber(step);
+
+  stepIdx++;
+  document.getElementById('stepLbl').textContent = `${stepIdx} / ${steps.length}`;
+  if (stepIdx >= steps.length) document.getElementById('btnPlay').disabled = true;
+}
+
+function resetViz() {
+  stopAuto();
+  stepIdx = 0;
+  const steps = getSteps();
+  document.getElementById('btnPlay').disabled = false;
+  document.getElementById('stepLbl').textContent = `0 / ${steps.length}`;
+  document.getElementById('phaseVal').textContent = '待機中';
+  document.getElementById('phaseVal').className = 'phase-value';
+  document.getElementById('expText').textContent = 'タブを選択して「次のステップ」または「自動再生」を押してください。';
+  document.getElementById('statA').textContent = '—';
+  document.getElementById('statB').textContent = '—';
+  if (currentTab === 0) renderRecon(RECON_STEPS[0]);
+  else renderFiber(FIBER_STEPS[0]);
+}
+
+function setTab(n) {
+  currentTab = n;
+  [0, 1].forEach(i => document.getElementById(`tab${i}`).classList.toggle('active', i === n));
+  document.getElementById('legend0').style.display = n === 0 ? '' : 'none';
+  document.getElementById('legend1').style.display = n === 1 ? '' : 'none';
+  document.getElementById('statALbl').textContent = n === 0 ? '変更なし' : '完了済み';
+  document.getElementById('statBLbl').textContent = n === 0 ? '更新/新規' : '残り';
+  resetViz();
+}
+
+function stopAuto() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  isAuto = false;
+  document.getElementById('btnAuto').textContent = '↻ 自動再生';
+}
+
+function toggleAuto() {
+  if (isAuto) { stopAuto(); return; }
+  isAuto = true;
+  document.getElementById('btnAuto').textContent = '⏸ 一時停止';
+  const speed = parseInt(document.getElementById('spd').value);
+  autoTimer = setInterval(() => {
+    const steps = getSteps();
+    if (stepIdx >= steps.length) { stopAuto(); return; }
+    nextStep();
+  }, speed);
+}
+
+function onSpeed() {
+  const v = document.getElementById('spd').value;
+  document.getElementById('spdLbl').textContent = (v / 1000).toFixed(1) + 's';
+  if (isAuto) { stopAuto(); toggleAuto(); }
+}
+
+// ─── Init ───────────────────────────────────────────────────
+renderRecon(RECON_STEPS[0]);
+document.getElementById('stepLbl').textContent = `0 / ${RECON_STEPS.length}`;
+</script>
+</body>
+</html>

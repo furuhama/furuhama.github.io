@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MVCC 可視化</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #ffffff; --surface: #f6f8fa; --surface2: #eaeef2;
+      --border: #d0d7de; --text: #1f2328; --text-muted: #636c76;
+      --green: #1a7f37; --blue: #0969da; --purple: #8250df;
+      --orange: #bc4c00; --red: #cf222e; --yellow: #9a6700;
+    }
+    body { background:var(--bg); color:var(--text); font-family:"Noto Sans","Helvetica Neue",Helvetica,Arial,sans-serif; min-height:100vh; display:flex; flex-direction:column; font-size:14px; }
+    header { padding:14px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; background:var(--surface); }
+    header h1 { font-size:1.1rem; font-weight:700; color:var(--text); }
+    .badge { background:rgba(26,127,55,0.1); color:var(--green); border:1px solid rgba(26,127,55,0.3); font-size:0.7rem; font-weight:700; padding:2px 8px; border-radius:12px; }
+    .back-link { font-size:0.75rem; color:var(--text-muted); text-decoration:none; margin-left:auto; display:flex; align-items:center; gap:4px; transition:color .15s; }
+    .back-link:hover { color:var(--text); }
+    .tab-bar { display:flex; background:var(--surface); border-bottom:1px solid var(--border); padding:0 24px; }
+    .tab-btn { padding:10px 18px; font-size:0.82rem; font-weight:500; color:var(--text-muted); background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; transition:all 0.15s; margin-bottom:-1px; }
+    .tab-btn.active { color:var(--blue); border-bottom-color:var(--blue); font-weight:700; }
+    .tab-btn:hover:not(.active) { color:var(--text); }
+    .main { display:flex; flex:1; }
+    .svg-panel { flex:1; padding:20px 24px 16px; display:flex; flex-direction:column; align-items:center; gap:10px; }
+    #mainSvg { width:100%; max-width:700px; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
+    .svg-note { font-size:0.72rem; color:var(--text-muted); align-self:flex-start; max-width:700px; width:100%; }
+    .info-panel { width:300px; min-width:260px; border-left:1px solid var(--border); background:var(--surface); display:flex; flex-direction:column; }
+    .info-section { padding:14px 16px; border-bottom:1px solid var(--border); }
+    .info-title { font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); margin-bottom:8px; }
+    .scenario-desc { font-size:0.8rem; color:var(--text); line-height:1.65; }
+    .scenario-desc code { background:var(--surface2); padding:1px 5px; border-radius:4px; font-family:'Fira Code',Consolas,monospace; font-size:0.76rem; }
+    .step-explain { font-size:0.8rem; color:var(--text); line-height:1.75; min-height:80px; transition:opacity 0.2s; }
+    .step-explain .hl-blue   { color:var(--blue);   font-weight:700; }
+    .step-explain .hl-green  { color:var(--green);  font-weight:700; }
+    .step-explain .hl-red    { color:var(--red);    font-weight:700; }
+    .step-explain .hl-orange { color:var(--orange); font-weight:700; }
+    .step-explain code { background:var(--surface2); padding:1px 5px; border-radius:4px; font-family:'Fira Code',Consolas,monospace; font-size:0.76rem; }
+    .legend { padding:10px 16px; display:flex; flex-direction:column; gap:6px; border-bottom:1px solid var(--border); }
+    .legend-item { display:flex; align-items:center; gap:8px; font-size:0.72rem; color:var(--text-muted); }
+    .legend-box { width:14px; height:14px; border-radius:3px; flex-shrink:0; border:1.5px solid; }
+    .controls { padding:14px 16px; display:flex; flex-direction:column; gap:8px; margin-top:auto; }
+    .controls-row { display:flex; gap:8px; }
+    .btn { padding:7px 12px; border-radius:6px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.8rem; cursor:pointer; transition:all 0.15s; font-weight:500; flex:1; text-align:center; }
+    .btn:hover { background:var(--surface2); }
+    .btn.primary { background:var(--blue); color:#fff; border-color:var(--blue); font-weight:700; }
+    .btn.primary:hover { background:#0550ae; }
+    .btn:disabled { opacity:0.4; cursor:not-allowed; }
+    .step-counter { font-size:0.72rem; color:var(--text-muted); text-align:center; }
+    .step-dots { display:flex; gap:4px; justify-content:center; flex-wrap:wrap; }
+    .step-dot { width:6px; height:6px; border-radius:50%; background:var(--border); transition:background 0.2s; }
+    .step-dot.done    { background:var(--green); }
+    .step-dot.current { background:var(--blue); }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <rect x="2" y="3"  width="20" height="4" rx="1.5" stroke="#0969da" stroke-width="1.8"/>
+    <rect x="2" y="10" width="20" height="4" rx="1.5" stroke="#1a7f37" stroke-width="1.8"/>
+    <rect x="2" y="17" width="14" height="4" rx="1.5" stroke="#d0d7de" stroke-width="1.8" stroke-dasharray="3,2"/>
+    <path d="M19 18.5 l3 0 M20.5 17 l1.5 1.5 -1.5 1.5" stroke="#bc4c00" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <h1>MVCC 可視化</h1>
+  <span class="badge">Interactive</span>
+  <a class="back-link" href="index.html">
+    <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+      <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
+    </svg>
+    一覧へ戻る
+  </a>
+</header>
+
+<div class="tab-bar" id="tabBar"></div>
+
+<div class="main">
+  <div class="svg-panel">
+    <svg id="mainSvg" viewBox="0 0 700 400" preserveAspectRatio="xMidYMid meet"></svg>
+    <p class="svg-note">PostgreSQL の MVCC モデルを基にした可視化です。xmin/xmax はタプルの可視性を制御するトランザクション ID です。</p>
+  </div>
+
+  <div class="info-panel">
+    <div class="info-section">
+      <div class="info-title">シナリオ</div>
+      <div class="scenario-desc" id="scenarioDesc"></div>
+    </div>
+    <div class="info-section">
+      <div class="info-title">ステップ説明</div>
+      <div class="step-explain" id="stepExplain"></div>
+    </div>
+    <div class="legend">
+      <div class="info-title">凡例</div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(9,105,218,0.1);border-color:#0969da;"></div>
+        Live Tuple（可視バージョン）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(207,34,46,0.1);border-color:#cf222e;"></div>
+        Dead Tuple（不可視／回収対象）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(26,127,55,0.12);border-color:#1a7f37;"></div>
+        コミット済みトランザクション
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(154,103,0,0.1);border-color:#9a6700;"></div>
+        進行中のトランザクション
+      </div>
+    </div>
+    <div class="controls">
+      <div class="controls-row">
+        <button class="btn" id="btnPrev" onclick="prevStep()">◀ 前へ</button>
+        <button class="btn primary" id="btnNext" onclick="nextStep()">次へ ▶</button>
+      </div>
+      <div class="controls-row">
+        <button class="btn" id="btnAuto" onclick="toggleAuto()">▶ 自動再生</button>
+        <button class="btn" onclick="resetScenario()">↺ リセット</button>
+      </div>
+      <div class="step-counter" id="stepCounter">ステップ: 1 / 1</div>
+      <div class="step-dots" id="stepDots"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── SVG helpers ──────────────────────────────────────────────
+const svgNS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs, text) {
+  const e = document.createElementNS(svgNS, tag);
+  if (attrs) Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, String(v)));
+  if (text != null) e.textContent = text;
+  return e;
+}
+function svgTxt(parent, txt, x, y, opts) {
+  opts = opts || {};
+  const t = svgEl('text', {
+    x, y,
+    'text-anchor': opts.anchor || 'middle',
+    'font-size':   opts.size   || 11,
+    fill:          opts.fill   || '#1f2328',
+    'font-weight': opts.weight || 'normal',
+    'font-family': opts.mono ? 'Fira Code,Consolas,monospace' : '"Noto Sans",sans-serif'
+  }, txt);
+  parent.appendChild(t);
+  return t;
+}
+
+// ── Layout constants ─────────────────────────────────────────
+const TX_X    = 8;    // transaction pane left x
+const TX_W    = 318;  // transaction pane width
+const VR_X    = 338;  // version store pane left x
+const VR_W    = 356;  // version store pane width
+const PANE_TOP = 8;
+const PANE_H   = 390;
+const TX_ROW_H = 72;  // height per transaction row
+const TX_ROW_Y0 = 44; // y offset of first tx row inside pane
+const VR_ROW_H = 50;  // height per version row
+const VR_ROW_Y0 = 44; // y offset of first version row
+
+// Column x positions in version store (anchor: start)
+const COL_XMIN    = VR_X + 14;
+const COL_XMAX    = VR_X + 58;
+const COL_VALUE   = VR_X + 104;
+const COL_STATUS  = VR_X + 158;
+const COL_VISIBLE = VR_X + 238;
+
+// ── Color maps ───────────────────────────────────────────────
+const TX_COLORS = {
+  idle:      { fill:'#f6f8fa',              stroke:'#d0d7de', text:'#636c76' },
+  active:    { fill:'rgba(154,103,0,0.09)', stroke:'#9a6700', text:'#7d5700' },
+  committed: { fill:'rgba(26,127,55,0.10)', stroke:'#1a7f37', text:'#1a7f37' },
+  aborted:   { fill:'rgba(207,34,46,0.09)', stroke:'#cf222e', text:'#cf222e' },
+  reading:   { fill:'rgba(9,105,218,0.10)', stroke:'#0969da', text:'#0550ae' },
+  vacuum:    { fill:'rgba(154,103,0,0.06)', stroke:'#9a6700', text:'#7d5700' },
+};
+const VR_COLORS = {
+  live:   { fill:'rgba(9,105,218,0.08)',  stroke:'#0969da' },
+  dead:   { fill:'rgba(207,34,46,0.08)',  stroke:'#cf222e' },
+  vacuum: { fill:'rgba(207,34,46,0.05)',  stroke:'#cf222e' },
+  new:    { fill:'rgba(26,127,55,0.10)',  stroke:'#1a7f37' },
+  inprog: { fill:'rgba(154,103,0,0.08)', stroke:'#9a6700' },
+};
+
+// ── Rendering ────────────────────────────────────────────────
+function renderSnapshot(snap) {
+  const svg = document.getElementById('mainSvg');
+  svg.innerHTML = '';
+
+  const txns    = snap.txns    || [];
+  const versions = snap.versions || [];
+  const arrows   = snap.arrows   || [];
+
+  const txPaneH  = Math.max(160, txns.length * TX_ROW_H + TX_ROW_Y0 + 8);
+  const vrPaneH  = Math.max(160, versions.length * VR_ROW_H + VR_ROW_Y0 + 8);
+  const paneH    = Math.min(Math.max(txPaneH, vrPaneH), PANE_H);
+
+  // ── Transaction pane ───────────────────────────────────
+  svg.appendChild(svgEl('rect', {
+    x:TX_X, y:PANE_TOP, width:TX_W, height:paneH, rx:8,
+    fill:'rgba(9,105,218,0.025)', stroke:'rgba(9,105,218,0.25)', 'stroke-width':1.5
+  }));
+  svgTxt(svg, 'トランザクション', TX_X + TX_W/2, PANE_TOP + 17, { size:11, weight:'700', fill:'#0969da' });
+
+  txns.forEach(function(tx, i) {
+    const ry = PANE_TOP + TX_ROW_Y0 + i * TX_ROW_H;
+    const c  = TX_COLORS[tx.state] || TX_COLORS.idle;
+    const hl = tx.highlight;
+    svg.appendChild(svgEl('rect', {
+      x:TX_X+8, y:ry, width:TX_W-16, height:TX_ROW_H-8, rx:6,
+      fill:   hl ? 'rgba(9,105,218,0.18)' : c.fill,
+      stroke: hl ? '#0969da' : c.stroke,
+      'stroke-width': hl ? 2.2 : 1.5
+    }));
+    // TxID label
+    svgTxt(svg, 'Tx' + tx.id, TX_X + 26, ry + 22, { size:13, weight:'700', fill:c.text, anchor:'start' });
+    // State
+    svgTxt(svg, tx.state, TX_X + 26, ry + 38, { size:10, fill:c.text, mono:true, anchor:'start' });
+    // Snapshot
+    if (tx.snapshot) {
+      svgTxt(svg, 'snap: ' + tx.snapshot, TX_X + 26, ry + 54, { size:9.5, fill:'#636c76', mono:true, anchor:'start' });
+    }
+    // Operation badge
+    if (tx.op) {
+      const bx = TX_X + TX_W - 110, by = ry + 10, bw = 100, bh = 20;
+      svg.appendChild(svgEl('rect', { x:bx, y:by, width:bw, height:bh, rx:4,
+        fill:'rgba(9,105,218,0.1)', stroke:'#0969da', 'stroke-width':1 }));
+      svgTxt(svg, tx.op, bx + bw/2, by + 14, { size:9.5, weight:'700', fill:'#0550ae', mono:true });
+    }
+  });
+
+  // ── Version store pane ─────────────────────────────────
+  svg.appendChild(svgEl('rect', {
+    x:VR_X, y:PANE_TOP, width:VR_W, height:paneH, rx:8,
+    fill:'rgba(26,127,55,0.02)', stroke:'rgba(26,127,55,0.25)', 'stroke-width':1.5
+  }));
+  svgTxt(svg, 'ヒープ（行バージョン）', VR_X + VR_W/2, PANE_TOP + 17, { size:11, weight:'700', fill:'#1a7f37' });
+
+  // Column headers
+  var hdrs = [['xmin', COL_XMIN], ['xmax', COL_XMAX], ['value', COL_VALUE],
+              ['状態', COL_STATUS], ['可視トランザクション', COL_VISIBLE]];
+  hdrs.forEach(function(h) {
+    svgTxt(svg, h[0], h[1], PANE_TOP + 33, { size:9, fill:'#9ca3af', anchor:'start' });
+  });
+
+  versions.forEach(function(v, i) {
+    var vy = PANE_TOP + VR_ROW_Y0 + i * VR_ROW_H + 4;
+    var c  = VR_COLORS[v.state] || VR_COLORS.live;
+    var rowFill   = v.highlight ? 'rgba(9,105,218,0.18)' : c.fill;
+    var rowStroke = v.highlight ? '#0969da' : c.stroke;
+    if (v.highlight && v.state === 'dead') { rowFill = 'rgba(207,34,46,0.15)'; rowStroke = '#cf222e'; }
+    svg.appendChild(svgEl('rect', {
+      x:VR_X+8, y:vy, width:VR_W-16, height:VR_ROW_H-8, rx:5,
+      fill:rowFill, stroke:rowStroke, 'stroke-width': v.highlight ? 2.2 : 1.5,
+      ...(v.state === 'vacuum' ? {'stroke-dasharray':'5,3'} : {})
+    }));
+
+    var xminStr  = String(v.xmin);
+    var xmaxStr  = (v.xmax === Infinity || v.xmax === null) ? '∞' : String(v.xmax);
+    var textCol  = c.stroke;
+    svgTxt(svg, xminStr, COL_XMIN,    vy + 24, { size:11, fill:textCol, mono:true, anchor:'start' });
+    svgTxt(svg, xmaxStr, COL_XMAX,    vy + 24, { size:11, fill:textCol, mono:true, anchor:'start' });
+    svgTxt(svg, String(v.value), COL_VALUE, vy + 24, { size:12, weight:'700', fill:'#1f2328', anchor:'start' });
+
+    var stFill = v.state === 'dead' || v.state === 'vacuum' ? '#cf222e'
+               : v.state === 'live' ? '#0969da'
+               : v.state === 'new'  ? '#1a7f37' : '#9a6700';
+    svgTxt(svg, v.statusLabel || v.state, COL_STATUS, vy + 24, { size:9.5, fill:stFill, anchor:'start' });
+
+    if (v.visibleTo) {
+      svgTxt(svg, v.visibleTo, COL_VISIBLE, vy + 24, { size:9.5, fill:'#0969da', anchor:'start', mono:true });
+    }
+    if (v.sublabel) {
+      svgTxt(svg, v.sublabel, VR_X + VR_W/2, vy + VR_ROW_H - 10, { size:8.5, fill:'#9ca3af' });
+    }
+  });
+
+  // ── Visibility arrows (tx pane → version pane) ─────────
+  arrows.forEach(function(a) {
+    var tx  = txns[a.txIdx];
+    var ver = versions[a.verIdx];
+    if (!tx || !ver) return;
+    var ty = PANE_TOP + TX_ROW_Y0 + a.txIdx * TX_ROW_H + TX_ROW_H/2 - 4;
+    var vy = PANE_TOP + VR_ROW_Y0 + a.verIdx * VR_ROW_H + 4 + (VR_ROW_H - 8)/2;
+    var x1 = TX_X + TX_W - 2, x2 = VR_X + 9;
+    var color = a.visible ? '#0969da' : '#cf222e';
+    var dash  = a.visible ? null : '5,3';
+    svg.appendChild(svgEl('line', {
+      x1, y1:ty, x2, y2:vy, stroke:color, 'stroke-width':1.6,
+      ...(dash ? {'stroke-dasharray':dash} : {})
+    }));
+    // Arrowhead
+    var dx = x2 - x1, dy = vy - ty, len = Math.hypot(dx, dy);
+    if (len > 5) {
+      var ux = dx/len, uy = dy/len;
+      var ex = x2 - ux*7, ey = vy - uy*7;
+      svg.appendChild(svgEl('polygon', {
+        points: x2+','+vy+' '+(ex-uy*3)+','+(ey+ux*3)+' '+(ex+uy*3)+','+(ey-ux*3),
+        fill:color
+      }));
+    }
+    if (a.label) {
+      svgTxt(svg, a.label, (x1+x2)/2, (ty+vy)/2 - 3, { size:9, fill:color, weight:'700' });
+    }
+  });
+}
+
+// ============================================================
+// Scenarios
+// ============================================================
+const SCENARIOS = [
+
+  // ── Scenario 1: スナップショット分離 ─────────────────────
+  {
+    name: '① スナップショット分離',
+    description: 'トランザクション開始時のスナップショットにより、同時実行中の更新が見えない様子を示します。<code>Repeatable Read</code> / <code>Serializable</code> 分離レベルの基礎です。',
+    steps: [
+      {
+        txns: [],
+        versions: [
+          { xmin:1, xmax:Infinity, value:1000, state:'live', statusLabel:'LIVE', visibleTo:'全Tx' }
+        ],
+        arrows: [],
+        explain: '初期状態。<code>accounts</code> テーブルに 1 行あります。<br>xmin=1（Tx1 が作成）、xmax=∞（まだ削除されていない）、value=1000。<br>すべてのトランザクションからこのバージョンが見えます。'
+      },
+      {
+        txns: [
+          { id:10, state:'active', snapshot:'txid &lt; 10', op:'BEGIN' },
+          { id:11, state:'active', snapshot:'txid &lt; 10', op:'BEGIN' },
+        ],
+        versions: [
+          { xmin:1, xmax:Infinity, value:1000, state:'live', statusLabel:'LIVE', visibleTo:'Tx10, Tx11' }
+        ],
+        arrows: [],
+        explain: '<span class="hl-blue">Tx10, Tx11 がほぼ同時に BEGIN。</span><br>どちらのスナップショットも「txid &lt; 10 がコミット済み」。<br>お互いの変更はまだ見えない状態でスタートします。'
+      },
+      {
+        txns: [
+          { id:10, state:'active', snapshot:'txid &lt; 10' },
+          { id:11, state:'active', snapshot:'txid &lt; 10', op:'UPDATE→2000' },
+        ],
+        versions: [
+          { xmin:1, xmax:11, value:1000, state:'dead', statusLabel:'DEAD(xmax=11)', visibleTo:'Tx10 ✓' },
+          { xmin:11, xmax:Infinity, value:2000, state:'inprog', statusLabel:'進行中(未コミット)', visibleTo:'—' },
+        ],
+        arrows: [
+          { txIdx:0, verIdx:0, visible:true, label:'sees' },
+        ],
+        explain: '<span class="hl-orange">Tx11 が UPDATE を実行。</span><br>MVCC は in-place 更新をしません：<br>① 旧バージョン（1000）の <strong>xmax を 11 に設定</strong><br>② 新バージョン（2000, xmin=11）を <strong>新規作成</strong><br>Tx11 が未コミットなので、Tx10 からは旧バージョン（1000）だけが見えます。'
+      },
+      {
+        txns: [
+          { id:10, state:'active', snapshot:'txid &lt; 10' },
+          { id:11, state:'committed', snapshot:'txid &lt; 10', op:'COMMIT' },
+        ],
+        versions: [
+          { xmin:1, xmax:11, value:1000, state:'dead', statusLabel:'DEAD', visibleTo:'Tx10 ✓' },
+          { xmin:11, xmax:Infinity, value:2000, state:'live', statusLabel:'LIVE', visibleTo:'Tx12 以降 ✓' },
+        ],
+        arrows: [
+          { txIdx:0, verIdx:0, visible:true, label:'sees 1000' },
+        ],
+        explain: '<span class="hl-green">Tx11 が COMMIT。</span><br>新バージョン（2000）は LIVE になりましたが、<strong>Tx10 のスナップショットには Tx11 が含まれていない</strong>ため、Tx10 からはまだ旧バージョン（1000）しか見えません。<br>これが <strong>Snapshot Isolation</strong> の本質です。'
+      },
+      {
+        txns: [
+          { id:10, state:'reading', snapshot:'txid &lt; 10', op:'SELECT → 1000', highlight:true },
+          { id:11, state:'committed', snapshot:'txid &lt; 10' },
+        ],
+        versions: [
+          { xmin:1, xmax:11, value:1000, state:'dead', statusLabel:'DEAD', visibleTo:'Tx10 ✓', highlight:true },
+          { xmin:11, xmax:Infinity, value:2000, state:'live', statusLabel:'LIVE', visibleTo:'Tx12 以降 ✓' },
+        ],
+        arrows: [
+          { txIdx:0, verIdx:0, visible:true,  label:'sees' },
+          { txIdx:0, verIdx:1, visible:false,  label:'hidden' },
+        ],
+        explain: '<span class="hl-blue">Tx10 が SELECT 実行。</span>スナップショット（txid &lt; 10）で可視性チェック：<br>• V1: xmin=1 ✓、xmax=11 → Tx11 はスナップショット時点で未コミット → <strong>削除扱いにならない → 見える</strong><br>• V2: xmin=11 → Tx11 が未コミット → <strong>見えない</strong><br>結果: <strong>SELECT → 1000</strong>'
+      },
+      {
+        txns: [
+          { id:10, state:'committed', snapshot:'txid &lt; 10' },
+          { id:11, state:'committed', snapshot:'txid &lt; 10' },
+          { id:12, state:'reading', snapshot:'txid ≤ 11', op:'SELECT → 2000', highlight:true },
+        ],
+        versions: [
+          { xmin:1, xmax:11, value:1000, state:'dead', statusLabel:'DEAD', visibleTo:'—（Tx12 に不可視）' },
+          { xmin:11, xmax:Infinity, value:2000, state:'live', statusLabel:'LIVE', visibleTo:'Tx12 ✓', highlight:true },
+        ],
+        arrows: [
+          { txIdx:2, verIdx:1, visible:true, label:'sees 2000' },
+        ],
+        explain: '<span class="hl-green">Tx10, Tx11 コミット後に Tx12 が BEGIN。</span><br>スナップショットに Tx11 が含まれる（txid ≤ 11 がコミット済み）ため：<br>• V2: xmin=11 ✓（コミット済み）→ <strong>見える</strong><br>• V1: xmax=11、Tx11 コミット済み → 削除確定 → <strong>見えない</strong><br>結果: <strong>SELECT → 2000</strong>'
+      },
+    ]
+  },
+
+  // ── Scenario 2: バージョンチェーン ───────────────────────
+  {
+    name: '② バージョンチェーン',
+    description: '複数回の更新で生成されるバージョンチェーンと <strong>Dead Tuple</strong> の積み重なりを観察します。',
+    steps: [
+      {
+        txns: [],
+        versions: [
+          { xmin:1, xmax:Infinity, value:500, state:'live', statusLabel:'LIVE', visibleTo:'全Tx' }
+        ],
+        arrows: [],
+        explain: '初期状態。<code>counter = 500</code> のタプルが 1 つあります。<br>MVCC では更新のたびに新バージョンが追加されます。古いバージョンは <strong>Dead Tuple</strong> として残り、VACUUM で定期回収されます。'
+      },
+      {
+        txns: [
+          { id:20, state:'active', snapshot:'txid &lt; 20', op:'UPDATE +100' },
+        ],
+        versions: [
+          { xmin:1, xmax:20, value:500, state:'dead', statusLabel:'DEAD(xmax=20)', visibleTo:'snap &lt; 20' },
+          { xmin:20, xmax:Infinity, value:600, state:'inprog', statusLabel:'進行中', visibleTo:'—（未コミット）' },
+        ],
+        arrows: [],
+        explain: '<span class="hl-orange">Tx20 が counter += 100 を実行。</span><br>旧バージョン（500）の <strong>xmax=20</strong> をセット、新バージョン（600, xmin=20）を作成。<br>Tx20 未コミットなので、他の Tx から新バージョンは見えません。'
+      },
+      {
+        txns: [
+          { id:20, state:'committed', snapshot:'txid &lt; 20', op:'COMMIT' },
+        ],
+        versions: [
+          { xmin:1, xmax:20, value:500, state:'dead', statusLabel:'DEAD', visibleTo:'—' },
+          { xmin:20, xmax:Infinity, value:600, state:'live', statusLabel:'LIVE', visibleTo:'txid ≥ 20 の新Tx' },
+        ],
+        arrows: [],
+        explain: '<span class="hl-green">Tx20 コミット。</span>value=600 が LIVE になりました。<br>value=500 は Dead Tuple（旧スナップショットを持つ Tx がなければ VACUUM 対象）。'
+      },
+      {
+        txns: [
+          { id:20, state:'committed', snapshot:'txid &lt; 20' },
+          { id:21, state:'active', snapshot:'txid ≤ 20', op:'UPDATE +100' },
+        ],
+        versions: [
+          { xmin:1, xmax:20, value:500, state:'dead', statusLabel:'DEAD', visibleTo:'—' },
+          { xmin:20, xmax:21, value:600, state:'dead', statusLabel:'DEAD(xmax=21)', visibleTo:'—' },
+          { xmin:21, xmax:Infinity, value:700, state:'inprog', statusLabel:'進行中', visibleTo:'—（未コミット）' },
+        ],
+        arrows: [],
+        explain: '<span class="hl-orange">Tx21 が counter += 100 を実行（Tx20 コミット後）。</span><br>同様に xmax=21 を value=600 にセット、value=700 の新バージョンを作成。<br>バージョンチェーン: <strong>500 → 600 → 700</strong> と連なっています。'
+      },
+      {
+        txns: [
+          { id:20, state:'committed', snapshot:'txid &lt; 20' },
+          { id:21, state:'committed', snapshot:'txid ≤ 20', op:'COMMIT' },
+          { id:22, state:'reading', snapshot:'txid ≤ 21', op:'SELECT → 700', highlight:true },
+        ],
+        versions: [
+          { xmin:1, xmax:20, value:500, state:'dead', statusLabel:'DEAD', visibleTo:'—' },
+          { xmin:20, xmax:21, value:600, state:'dead', statusLabel:'DEAD', visibleTo:'—' },
+          { xmin:21, xmax:Infinity, value:700, state:'live', statusLabel:'LIVE', visibleTo:'Tx22 ✓', highlight:true },
+        ],
+        arrows: [
+          { txIdx:2, verIdx:2, visible:true, label:'sees 700' },
+        ],
+        explain: '<span class="hl-green">Tx21 コミット。Tx22 が SELECT を実行。</span><br>スナップショット（txid ≤ 21）で V3（xmin=21）が可視。V1, V2 は Dead Tuple。<br>Tx22 は最新値 <strong>700</strong> を取得。<br>Dead Tuple が 2 つ蓄積されています → VACUUM が必要です。'
+      },
+    ]
+  },
+
+  // ── Scenario 3: VACUUM ───────────────────────────────────
+  {
+    name: '③ VACUUM',
+    description: 'Dead Tuple は即座に削除されず、<code>VACUUM</code> プロセスが定期的に回収します。長時間トランザクションが VACUUM を妨げる問題も確認します。',
+    steps: [
+      {
+        txns: [],
+        versions: [
+          { xmin:1, xmax:10, value:100, state:'dead', statusLabel:'DEAD', visibleTo:'—', sublabel:'Tx10 が更新（コミット済み）' },
+          { xmin:10, xmax:15, value:200, state:'dead', statusLabel:'DEAD', visibleTo:'—', sublabel:'Tx15 が更新（コミット済み）' },
+          { xmin:15, xmax:Infinity, value:300, state:'live', statusLabel:'LIVE', visibleTo:'新しい Tx', sublabel:'現在の最新版' },
+        ],
+        arrows: [],
+        explain: '複数の更新後の状態。V1（100）と V2（200）は <strong>Dead Tuple</strong> として残っています。<br>アクティブなトランザクションがこれらの古いバージョンを必要としない場合、VACUUM で安全に回収できます。'
+      },
+      {
+        txns: [
+          { id:'—', state:'vacuum', snapshot:'VACUUM プロセス', op:'VACUUM 実行中' },
+        ],
+        versions: [
+          { xmin:1, xmax:10, value:100, state:'vacuum', statusLabel:'🗑 回収対象', visibleTo:'—', sublabel:'OldestXmin より古い Dead Tuple' },
+          { xmin:10, xmax:15, value:200, state:'vacuum', statusLabel:'🗑 回収対象', visibleTo:'—', sublabel:'OldestXmin より古い Dead Tuple' },
+          { xmin:15, xmax:Infinity, value:300, state:'live', statusLabel:'LIVE（保持）', visibleTo:'保持', sublabel:'現在の最新版' },
+        ],
+        arrows: [],
+        explain: '<span class="hl-orange">VACUUM が起動。</span><br>全アクティブ Tx のスナップショット最小値（<strong>OldestXmin</strong>）を確認します。<br>OldestXmin より古い xmax を持つ Dead Tuple は<strong>どのスナップショットからも不要</strong>なため安全に削除できます。'
+      },
+      {
+        txns: [],
+        versions: [
+          { xmin:15, xmax:Infinity, value:300, state:'live', statusLabel:'LIVE', visibleTo:'全 Tx（新規）', highlight:true },
+        ],
+        arrows: [],
+        explain: '<span class="hl-green">VACUUM 完了。</span>V1（100）と V2（200）が回収され、ディスクスペースが解放されました。<br>V3（300）のみが残ります。<br><br><strong>Note:</strong> 通常の VACUUM は空き領域を再利用可能にマークするだけです（ファイル縮小には <code>VACUUM FULL</code> が必要）。'
+      },
+      {
+        txns: [
+          { id:50, state:'active', snapshot:'txid &lt; 5', op:'長時間実行中...', highlight:true },
+        ],
+        versions: [
+          { xmin:1, xmax:10, value:100, state:'dead', statusLabel:'DEAD（回収不可）', visibleTo:'Tx50 の snap で必要？', highlight:true },
+          { xmin:10, xmax:15, value:200, state:'dead', statusLabel:'DEAD（回収不可）', visibleTo:'Tx50 の snap で必要？' },
+          { xmin:15, xmax:Infinity, value:300, state:'live', statusLabel:'LIVE', visibleTo:'Tx50+' },
+        ],
+        arrows: [
+          { txIdx:0, verIdx:0, visible:true, label:'OldestXmin' },
+        ],
+        explain: '<span class="hl-red">長時間トランザクション（Tx50）の問題。</span><br>Tx50 のスナップショットが非常に古い（txid &lt; 5）ため、VACUUM は OldestXmin=5 より古い Dead Tuple を回収できません。<br>これが <strong>テーブル肥大化（Table Bloat）</strong> の原因です。<br>→ 長時間 Tx を避け、<code>idle in transaction timeout</code> を設定することが重要です。'
+      },
+    ]
+  },
+];
+
+// ============================================================
+// State & Controls
+// ============================================================
+let currentScenario = 0;
+let currentStep = 0;
+let autoTimer = null;
+
+function renderStep() {
+  const sc   = SCENARIOS[currentScenario];
+  const step = sc.steps[currentStep];
+  renderSnapshot(step);
+
+  const el = document.getElementById('stepExplain');
+  el.style.opacity = 0;
+  setTimeout(function() { el.innerHTML = step.explain || ''; el.style.opacity = 1; }, 100);
+
+  document.getElementById('btnPrev').disabled = currentStep === 0;
+  document.getElementById('btnNext').disabled = currentStep >= sc.steps.length - 1;
+  updateStepCounter();
+}
+
+function nextStep() {
+  const sc = SCENARIOS[currentScenario];
+  if (currentStep < sc.steps.length - 1) { currentStep++; renderStep(); }
+}
+function prevStep() {
+  if (currentStep > 0) { currentStep--; renderStep(); }
+}
+function resetScenario() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  currentStep = 0;
+  document.getElementById('btnAuto').textContent = '▶ 自動再生';
+  renderStep();
+}
+function toggleAuto() {
+  if (autoTimer) {
+    clearInterval(autoTimer); autoTimer = null;
+    document.getElementById('btnAuto').textContent = '▶ 自動再生';
+  } else {
+    document.getElementById('btnAuto').textContent = '⏸ 停止';
+    autoTimer = setInterval(function() {
+      const sc = SCENARIOS[currentScenario];
+      if (currentStep >= sc.steps.length - 1) {
+        clearInterval(autoTimer); autoTimer = null;
+        document.getElementById('btnAuto').textContent = '▶ 自動再生';
+        return;
+      }
+      nextStep();
+    }, 1800);
+  }
+}
+function selectScenario(idx) {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  currentScenario = idx;
+  currentStep = 0;
+  document.getElementById('btnAuto').textContent = '▶ 自動再生';
+  document.querySelectorAll('.tab-btn').forEach(function(btn, i) { btn.classList.toggle('active', i === idx); });
+  document.getElementById('scenarioDesc').innerHTML = SCENARIOS[idx].description;
+  renderStep();
+}
+function updateStepCounter() {
+  const sc = SCENARIOS[currentScenario];
+  document.getElementById('stepCounter').textContent = 'ステップ: ' + (currentStep + 1) + ' / ' + sc.steps.length;
+  const dots = document.getElementById('stepDots');
+  dots.innerHTML = '';
+  sc.steps.forEach(function(_, i) {
+    const d = document.createElement('div');
+    d.className = 'step-dot' + (i < currentStep ? ' done' : i === currentStep ? ' current' : '');
+    dots.appendChild(d);
+  });
+}
+
+// ── Init ─────────────────────────────────────────────────────
+(function init() {
+  const tabBar = document.getElementById('tabBar');
+  SCENARIOS.forEach(function(sc, i) {
+    const btn = document.createElement('button');
+    btn.className = 'tab-btn' + (i === 0 ? ' active' : '');
+    btn.textContent = sc.name;
+    btn.onclick = function() { selectScenario(i); };
+    tabBar.appendChild(btn);
+  });
+  document.getElementById('scenarioDesc').innerHTML = SCENARIOS[0].description;
+  renderStep();
+})();
+</script>
+</body>
+</html>

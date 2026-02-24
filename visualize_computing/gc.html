@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Garbage Collection 可視化</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #ffffff; --surface: #f6f8fa; --surface2: #eaeef2;
+      --border: #d0d7de; --text: #1f2328; --text-muted: #636c76;
+      --green: #1a7f37; --blue: #0969da; --purple: #8250df;
+      --orange: #bc4c00; --red: #cf222e; --yellow: #9a6700;
+    }
+    body { background: var(--bg); color: var(--text); font-family: "Noto Sans","Helvetica Neue",Helvetica,Arial,sans-serif; font-size:14px; min-height:100vh; display:flex; flex-direction:column; }
+    .back-link { font-size:.75rem; color:var(--text-muted); text-decoration:none; margin-left:auto; display:flex; align-items:center; gap:4px; transition:color .15s; }
+    .back-link:hover { color:var(--text); }
+    header { padding:16px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; background:var(--surface); }
+    header h1 { font-size:1.2rem; font-weight:700; color:var(--text); }
+    .badge { background:rgba(26,127,55,.1); color:var(--green); border:1px solid rgba(26,127,55,.3); font-size:.7rem; font-weight:700; padding:2px 8px; border-radius:12px; }
+    .tabs { display:flex; padding:0 24px; border-bottom:1px solid var(--border); background:var(--surface); }
+    .tab { padding:10px 16px; font-size:.82rem; font-weight:600; cursor:pointer; background:none; border:none; border-bottom:2px solid transparent; color:var(--text-muted); transition:all .15s; margin-bottom:-1px; }
+    .tab.active { color:var(--blue); border-bottom-color:var(--blue); }
+    .main { flex:1; display:grid; grid-template-columns:1fr 220px; }
+    .svg-container { padding:16px; display:flex; flex-direction:column; gap:8px; min-height:0; }
+    #gcSvg { width:100%; flex:1; border:1px solid var(--border); border-radius:8px; background:#fafbfc; }
+    .info-panel { border-left:1px solid var(--border); padding:14px; background:var(--surface); display:flex; flex-direction:column; gap:12px; overflow-y:auto; }
+    .info-section-title { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text-muted); margin-bottom:6px; }
+    .phase-box { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px; }
+    .phase-value { font-size:.88rem; font-weight:700; color:var(--text); margin-top:4px; }
+    .phase-value.mark { color:var(--blue); }
+    .phase-value.sweep { color:var(--red); }
+    .phase-value.done { color:var(--green); }
+    .legend { display:flex; flex-direction:column; gap:5px; }
+    .legend-item { display:flex; align-items:center; gap:7px; font-size:.75rem; color:var(--text-muted); }
+    .ldot { width:13px; height:13px; border-radius:50%; border:2px solid; flex-shrink:0; }
+    .ldot.default  { background:#e6eef6; border-color:#a0b8d0; }
+    .ldot.queued   { background:#fff3cd; border-color:#e6a817; }
+    .ldot.marked   { background:#d1f0db; border-color:#1a7f37; }
+    .ldot.garbage  { background:#ffd7d5; border-color:#cf222e; }
+    .stats-box { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .stat-item { display:flex; flex-direction:column; gap:2px; }
+    .stat-num { font-size:1.2rem; font-weight:700; }
+    .stat-lbl { font-size:.68rem; color:var(--text-muted); }
+    .explanation { padding:10px 24px; background:var(--surface); border-top:1px solid var(--border); font-size:.82rem; color:var(--text); min-height:40px; line-height:1.6; }
+    .controls { display:flex; align-items:center; gap:8px; padding:10px 24px; background:var(--surface); border-top:1px solid var(--border); }
+    .btn { padding:6px 14px; border-radius:6px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:.82rem; cursor:pointer; transition:all .15s; display:flex; align-items:center; gap:5px; font-weight:500; }
+    .btn:hover { background:var(--surface2); }
+    .btn.primary { background:var(--blue); color:#fff; border-color:var(--blue); font-weight:700; }
+    .btn.primary:hover { background:#0550ae; }
+    .btn:disabled { opacity:.4; cursor:not-allowed; }
+    .speed-ctrl { display:flex; align-items:center; gap:8px; margin-left:auto; font-size:.78rem; color:var(--text-muted); }
+    .speed-ctrl input { width:90px; accent-color:var(--blue); }
+    .step-lbl { font-size:.75rem; color:var(--text-muted); }
+    .hl-g { color:var(--green); font-weight:700; }
+    .hl-b { color:var(--blue); font-weight:700; }
+    .hl-r { color:var(--red); font-weight:700; }
+    .hl-o { color:var(--orange); font-weight:700; }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="10" stroke="#1a7f37" stroke-width="2"/>
+    <path d="M8 8h8M8 12h5M8 16h3" stroke="#1a7f37" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M17 14l2 2-2 2" stroke="#1a7f37" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <h1>Garbage Collection 可視化</h1>
+  <span class="badge">Interactive</span>
+  <a class="back-link" href="index.html">
+    <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/></svg>
+    一覧へ戻る
+  </a>
+</header>
+
+<div class="tabs">
+  <button class="tab active" id="tab0" onclick="setTab(0)">Mark &amp; Sweep</button>
+  <button class="tab" id="tab1" onclick="setTab(1)">世代別 GC</button>
+</div>
+
+<div class="main">
+  <div class="svg-container">
+    <svg id="gcSvg" viewBox="0 0 680 360"></svg>
+  </div>
+  <div class="info-panel">
+    <div class="phase-box">
+      <div class="info-section-title">現在のフェーズ</div>
+      <div class="phase-value" id="phaseVal">待機中</div>
+    </div>
+    <div>
+      <div class="info-section-title">凡例</div>
+      <div class="legend" id="legend">
+        <div class="legend-item"><span class="ldot default"></span>未訪問</div>
+        <div class="legend-item"><span class="ldot queued"></span>訪問中</div>
+        <div class="legend-item"><span class="ldot marked"></span>マーク済</div>
+        <div class="legend-item"><span class="ldot garbage"></span>ガベージ</div>
+      </div>
+    </div>
+    <div class="stats-box">
+      <div class="stat-item">
+        <span class="stat-num" style="color:var(--green)" id="statAlive">10</span>
+        <span class="stat-lbl">生存</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-num" style="color:var(--red)" id="statDead">0</span>
+        <span class="stat-lbl">回収済み</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="explanation" id="expText">タブを選択して「次のステップ」または「自動再生」を押してください。</div>
+
+<div class="controls">
+  <button class="btn primary" id="btnPlay" onclick="nextStep()">▶ 次のステップ</button>
+  <button class="btn" id="btnAuto" onclick="toggleAuto()">↻ 自動再生</button>
+  <button class="btn" onclick="resetViz()">⟳ リセット</button>
+  <span class="step-lbl" id="stepLbl">0 / 0</span>
+  <div class="speed-ctrl">
+    速度: <input type="range" id="spd" min="300" max="2000" value="900" step="100" oninput="onSpeed()">
+    <span id="spdLbl">0.9s</span>
+  </div>
+</div>
+
+<script>
+// ─── Data ────────────────────────────────────────────────
+const R = 22;
+const OBJ_COLOR = {
+  default: {fill:'#e6eef6', stroke:'#a0b8d0', text:'#636c76'},
+  queued:  {fill:'#fff3cd', stroke:'#e6a817', text:'#9a6700'},
+  marked:  {fill:'#d1f0db', stroke:'#1a7f37', text:'#1a7f37'},
+  garbage: {fill:'#ffd7d5', stroke:'#cf222e', text:'#cf222e'},
+  swept:   {fill:'none',    stroke:'none',    text:'none'},
+};
+
+// Mark & Sweep heap objects
+const MS_OBJS = [
+  {id:'A', x:180, y:90,  refs:['B','C']},
+  {id:'B', x:310, y:50,  refs:['E']},
+  {id:'C', x:310, y:145, refs:[]},
+  {id:'E', x:440, y:50,  refs:[]},
+  {id:'D', x:180, y:255, refs:['F']},
+  {id:'F', x:310, y:255, refs:['G']},
+  {id:'G', x:440, y:255, refs:[]},
+  {id:'X', x:450, y:155, refs:['Y']},
+  {id:'Y', x:570, y:110, refs:[]},
+  {id:'Z', x:570, y:220, refs:[]},
+];
+
+const MS_STEPS = [
+  {ph:'',         act:null,             text:'ヒープに10個のオブジェクトがあります。<span class="hl-b">Root</span>から到達可能(A〜G)と、到達不能な<span class="hl-r">ゴミ</span>(X,Y,Z)が混在しています。'},
+  {ph:'Mark',     act:null,             text:'GC開始。<span class="hl-b">マークフェーズ</span>：ルートセットから参照を辿って到達可能なオブジェクトをマークします。'},
+  {ph:'Mark',     act:{t:'queue',id:'A'},text:'Root → <b>A</b>: A を訪問キューに追加。'},
+  {ph:'Mark',     act:{t:'mark', id:'A'},text:'A を<span class="hl-g">マーク</span>。参照先 B, C をキューへ追加。'},
+  {ph:'Mark',     act:{t:'queue',id:'B'},text:'B をキューへ追加。'},
+  {ph:'Mark',     act:{t:'queue',id:'C'},text:'C をキューへ追加。'},
+  {ph:'Mark',     act:{t:'mark', id:'B'},text:'B を<span class="hl-g">マーク</span>。参照先 E をキューへ追加。'},
+  {ph:'Mark',     act:{t:'queue',id:'E'},text:'E をキューへ追加。'},
+  {ph:'Mark',     act:{t:'mark', id:'C'},text:'C を<span class="hl-g">マーク</span>。参照先なし。'},
+  {ph:'Mark',     act:{t:'mark', id:'E'},text:'E を<span class="hl-g">マーク</span>。参照先なし。'},
+  {ph:'Mark',     act:{t:'queue',id:'D'},text:'Root → <b>D</b>: D をキューへ追加。'},
+  {ph:'Mark',     act:{t:'mark', id:'D'},text:'D を<span class="hl-g">マーク</span>。参照先 F をキューへ追加。'},
+  {ph:'Mark',     act:{t:'queue',id:'F'},text:'F をキューへ追加。'},
+  {ph:'Mark',     act:{t:'mark', id:'F'},text:'F を<span class="hl-g">マーク</span>。参照先 G をキューへ追加。'},
+  {ph:'Mark',     act:{t:'queue',id:'G'},text:'G をキューへ追加。'},
+  {ph:'Mark',     act:{t:'mark', id:'G'},text:'G を<span class="hl-g">マーク</span>。参照先なし。'},
+  {ph:'Mark完了', act:null,             text:'マークフェーズ完了。<span class="hl-r">X, Y, Z</span> はどのルートからも到達できないため、マークされていません。'},
+  {ph:'Sweep',    act:null,             text:'<span class="hl-r">スイープフェーズ</span>：未マークのオブジェクトを回収します。'},
+  {ph:'Sweep',    act:{t:'gb',  id:'X'},text:'<span class="hl-r">X</span> はマーク無し → ガベージ。'},
+  {ph:'Sweep',    act:{t:'gb',  id:'Y'},text:'<span class="hl-r">Y</span> はマーク無し → ガベージ。'},
+  {ph:'Sweep',    act:{t:'gb',  id:'Z'},text:'<span class="hl-r">Z</span> はマーク無し → ガベージ。'},
+  {ph:'Sweep',    act:{t:'sweep',ids:['X','Y','Z']}, text:'X, Y, Z のメモリを解放。3オブジェクト分を回収しました。'},
+  {ph:'完了',     act:null,             text:'GC完了。<span class="hl-g">7個</span>生存、<span class="hl-r">3個</span>回収。<br>Note: Mark &amp; Sweep はメモリの断片化が起きる。これを解消するのが <b>Compacting GC</b>。'},
+];
+
+// Generational GC: step-based region state
+// Each step: {text, eden, s0, s1, old, note}
+// Object: {id, age, c} (c = color index 0-5)
+const PALETTE = ['#c8e6c9','#bbdefb','#f8bbd0','#fff9c4','#e1bee7','#ffe0b2'];
+const PAL_STROKE = ['#388e3c','#1565c0','#c2185b','#f9a825','#7b1fa2','#e65100'];
+
+const GEN_STEPS = [
+  {ph:'',
+   text:'<span class="hl-b">世代別 GC</span>：オブジェクトの「寿命」に着目した手法。ほとんどのオブジェクトはすぐに死ぬという観察(Infant Mortality仮説)に基づきます。<br>Young世代(Eden + S0 + S1)とOld世代に分けて管理します。',
+   eden:[], s0:[], s1:[], old:[]},
+  {ph:'割り当て',
+   text:'新しいオブジェクトは常に <span class="hl-b">Eden</span> に割り当てられます。',
+   eden:[{id:'1',age:0,c:0},{id:'2',age:0,c:1},{id:'3',age:0,c:2},{id:'4',age:0,c:3},{id:'5',age:0,c:4}], s0:[], s1:[], old:[]},
+  {ph:'割り当て',
+   text:'さらに割り当てが続き、Edenが満杯に近づきました。',
+   eden:[{id:'1',age:0,c:0},{id:'2',age:0,c:1},{id:'3',age:0,c:2},{id:'4',age:0,c:3},{id:'5',age:0,c:4},{id:'6',age:0,c:5}], s0:[], s1:[], old:[]},
+  {ph:'Minor GC',
+   text:'Edenが満杯 → <span class="hl-b">Minor GC</span>（Young世代のGC）が発動。生存オブジェクトを特定します。<span class="hl-r">2, 4, 6</span>はどこからも参照されておらずガベージです。',
+   eden:[{id:'1',age:0,c:0},{id:'3',age:0,c:2},{id:'5',age:0,c:4}], s0:[], s1:[], old:[], gbEden:['2','4','6']},
+  {ph:'Minor GC',
+   text:'生存オブジェクト(1, 3, 5)を <span class="hl-b">Survivor S0</span> にコピー。年齢(age)を1増やします。Edenをクリア。',
+   eden:[], s0:[{id:'1',age:1,c:0},{id:'3',age:1,c:2},{id:'5',age:1,c:4}], s1:[], old:[]},
+  {ph:'割り当て',
+   text:'Edenがクリアされ、新しいオブジェクトの割り当てが再開します。',
+   eden:[{id:'7',age:0,c:1},{id:'8',age:0,c:3},{id:'9',age:0,c:5},{id:'10',age:0,c:0},{id:'11',age:0,c:2}],
+   s0:[{id:'1',age:1,c:0},{id:'3',age:1,c:2},{id:'5',age:1,c:4}], s1:[], old:[]},
+  {ph:'Minor GC',
+   text:'再びEden満杯 → 2回目のMinor GC。<span class="hl-r">8, 10</span>はガベージ。Eden生存(7,9,11) + S0生存(1,3,5) をS1へコピー。',
+   eden:[], s0:[], s1:[{id:'7',age:1,c:1},{id:'9',age:1,c:5},{id:'11',age:1,c:2},{id:'1',age:2,c:0},{id:'3',age:2,c:2},{id:'5',age:2,c:4}], old:[]},
+  {ph:'昇格',
+   text:'<span class="hl-o">age ≥ 2(閾値)</span> のオブジェクト 1, 3, 5 を <span class="hl-b">Old世代</span> に昇格(Promote)します。長寿なオブジェクトとして別管理します。',
+   eden:[], s0:[], s1:[{id:'7',age:1,c:1},{id:'9',age:1,c:5},{id:'11',age:1,c:2}], old:[{id:'1',age:2,c:0},{id:'3',age:2,c:2},{id:'5',age:2,c:4}]},
+  {ph:'Old世代',
+   text:'Old世代は <span class="hl-b">Major GC(Full GC)</span> によってのみ収集されます。Major GCはコストが高く、頻度は低い。<br>世代別GCの利点：短命オブジェクトを安価なMinor GCで素早く回収できます。',
+   eden:[{id:'12',age:0,c:3},{id:'13',age:0,c:5}],
+   s0:[], s1:[{id:'7',age:1,c:1},{id:'9',age:1,c:5},{id:'11',age:1,c:2}],
+   old:[{id:'1',age:2,c:0},{id:'3',age:2,c:2},{id:'5',age:2,c:4}]},
+];
+
+// ─── State ───────────────────────────────────────────────
+let currentTab = 0;
+let stepIdx = 0;
+let objStates = {};
+let sweptIds = new Set();
+let autoTimer = null;
+let isAuto = false;
+
+function initMS() {
+  objStates = {};
+  sweptIds = new Set();
+  MS_OBJS.forEach(o => { objStates[o.id] = 'default'; });
+}
+
+// ─── SVG helpers ─────────────────────────────────────────
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const svg = () => document.getElementById('gcSvg');
+
+function el(tag, attrs) {
+  const e = document.createElementNS(SVG_NS, tag);
+  Object.entries(attrs).forEach(([k,v]) => e.setAttribute(k, v));
+  return e;
+}
+
+function svgText(parent, txt, x, y, opts={}) {
+  const t = el('text', {x, y, 'text-anchor': opts.anchor||'middle',
+    'font-size': opts.size||'0.78rem', fill: opts.fill||'#636c76',
+    'font-weight': opts.weight||'normal', 'font-family': 'Noto Sans,sans-serif'});
+  t.textContent = txt;
+  parent.appendChild(t);
+  return t;
+}
+
+function drawArrow(parent, x1, y1, x2, y2, color, dashed=false) {
+  const dx = x2-x1, dy = y2-y1, len = Math.hypot(dx,dy);
+  if (len < 2) return;
+  const ux = dx/len, uy = dy/len;
+  const AL = 9, AW = 4;
+  const ex = x2 - ux*AL, ey = y2 - uy*AL;
+  const px = -uy, py = ux;
+  const line = el('line', {x1, y1, x2: ex, y2: ey, stroke: color, 'stroke-width':'1.5',
+    ...(dashed ? {'stroke-dasharray':'5,3'} : {})});
+  parent.appendChild(line);
+  const tri = el('polygon', {
+    points:`${x2},${y2} ${ex+px*AW},${ey+py*AW} ${ex-px*AW},${ey-py*AW}`,
+    fill: color
+  });
+  parent.appendChild(tri);
+}
+
+function circleEdgePoint(cx, cy, tx, ty, r) {
+  const dx = tx-cx, dy = ty-cy, d = Math.hypot(dx,dy);
+  return [cx + dx/d*r, cy + dy/d*r];
+}
+
+// ─── Mark & Sweep render ─────────────────────────────────
+function renderMS() {
+  const s = svg();
+  s.innerHTML = '';
+
+  // Heap boundary
+  s.appendChild(el('rect',{x:120,y:8,width:552,height:344,rx:10,fill:'#fafbfc',stroke:'#d0d7de','stroke-width':'1.5'}));
+  svgText(s,'Heap', 664, 28, {size:'0.68rem',anchor:'end'});
+
+  // Garbage zone hint
+  s.appendChild(el('rect',{x:420,y:80,width:240,height:200,rx:8,fill:'rgba(207,34,46,0.03)',stroke:'rgba(207,34,46,0.15)','stroke-width':'1','stroke-dasharray':'5,4'}));
+  svgText(s,'到達不能ゾーン', 540, 74, {size:'0.62rem', fill:'rgba(207,34,46,0.5)'});
+
+  // Root set
+  s.appendChild(el('rect',{x:8,y:55,width:84,height:240,rx:8,fill:'rgba(9,105,218,0.05)',stroke:'rgba(9,105,218,0.25)','stroke-width':'1.5','stroke-dasharray':'4,3'}));
+  svgText(s,'Root Set',50,76,{size:'0.65rem',fill:'#0969da',weight:'bold'});
+
+  const rootDefs = [{id:'A',ry:120},{id:'D',ry:250}];
+  const objMap = {};
+  MS_OBJS.forEach(o => { objMap[o.id] = o; });
+
+  // Pass 2: All edges in a dedicated group (above backgrounds, below nodes)
+  const edgesG = el('g', {});
+  s.appendChild(edgesG);
+
+  rootDefs.forEach(r => {
+    const obj = objMap[r.id];
+    if (obj && objStates[obj.id] !== 'swept') {
+      const [sx,sy] = [63, r.ry];
+      const [ex,ey] = circleEdgePoint(obj.x, obj.y, sx, sy, R);
+      drawArrow(edgesG, sx, sy, ex, ey, 'rgba(9,105,218,0.5)');
+    }
+  });
+
+  MS_OBJS.forEach(obj => {
+    if (objStates[obj.id] === 'swept') return;
+    obj.refs.forEach(refId => {
+      const t = objMap[refId];
+      if (!t || objStates[t.id] === 'swept') return;
+      const isMarked = objStates[obj.id] === 'marked';
+      const c = isMarked ? 'rgba(26,127,55,0.5)' : 'rgba(160,184,208,0.8)';
+      const [sx,sy] = circleEdgePoint(obj.x, obj.y, t.x, t.y, R+1);
+      const [ex,ey] = circleEdgePoint(t.x, t.y, obj.x, obj.y, R+1);
+      drawArrow(edgesG, sx, sy, ex, ey, c);
+    });
+  });
+
+  // Pass 3: Root indicator circles (above edges)
+  rootDefs.forEach(r => {
+    s.appendChild(el('circle',{cx:50,cy:r.ry,r:13,fill:'rgba(9,105,218,0.1)',stroke:'#0969da','stroke-width':'1.5'}));
+    svgText(s, r.id, 50, r.ry+5, {size:'0.75rem',fill:'#0969da',weight:'bold'});
+  });
+
+  // Pass 4: Nodes (topmost)
+  MS_OBJS.forEach(obj => {
+    if (objStates[obj.id] === 'swept') return;
+    const st = OBJ_COLOR[objStates[obj.id]] || OBJ_COLOR.default;
+    if (objStates[obj.id] === 'queued') {
+      s.appendChild(el('circle',{cx:obj.x,cy:obj.y,r:R+6,fill:'none',stroke:'#e6a817','stroke-width':'1.5','stroke-dasharray':'4,3',opacity:'0.7'}));
+    }
+    s.appendChild(el('circle',{cx:obj.x,cy:obj.y,r:R,fill:st.fill,stroke:st.stroke,'stroke-width':'2'}));
+    svgText(s, obj.id, obj.x, obj.y+5, {size:'0.88rem',fill:st.text,weight:'bold'});
+  });
+
+  // Stats
+  const alive = MS_OBJS.filter(o => !sweptIds.has(o.id)).length;
+  document.getElementById('statAlive').textContent = alive;
+  document.getElementById('statDead').textContent = sweptIds.size;
+}
+
+// ─── Generational GC render ──────────────────────────────
+function renderGen(st) {
+  const s = svg();
+  s.innerHTML = '';
+
+  // Layout
+  const W = 680, YH = 155, OY = 220, OH = 120;
+  const EW = 300, EX = 10;
+  const S0X = 318, S0W = 165;
+  const S1X = 491, S1W = 165;
+  const OX = 10;
+
+  // Young gen background
+  s.appendChild(el('rect',{x:5,y:5,width:670,height:185,rx:10,fill:'rgba(9,105,218,0.03)',stroke:'rgba(9,105,218,0.2)','stroke-width':'1.5'}));
+  svgText(s,'Young 世代',340,22,{size:'0.68rem',fill:'#0969da',weight:'bold'});
+
+  // Eden
+  s.appendChild(el('rect',{x:EX,y:30,width:EW,height:YH,rx:8,fill:'rgba(26,127,55,0.05)',stroke:'rgba(26,127,55,0.3)','stroke-width':'1.5'}));
+  svgText(s,'Eden',EX+EW/2,50,{size:'0.68rem',fill:'#1a7f37',weight:'bold'});
+
+  // S0
+  s.appendChild(el('rect',{x:S0X,y:30,width:S0W,height:YH,rx:8,fill:'rgba(9,105,218,0.05)',stroke:'rgba(9,105,218,0.25)','stroke-width':'1.5'}));
+  svgText(s,'Survivor S0',S0X+S0W/2,50,{size:'0.65rem',fill:'#0969da',weight:'bold'});
+
+  // S1
+  s.appendChild(el('rect',{x:S1X,y:30,width:S1W,height:YH,rx:8,fill:'rgba(130,80,223,0.05)',stroke:'rgba(130,80,223,0.25)','stroke-width':'1.5'}));
+  svgText(s,'Survivor S1',S1X+S1W/2,50,{size:'0.65rem',fill:'#8250df',weight:'bold'});
+
+  // Old gen
+  s.appendChild(el('rect',{x:OX,y:OY,width:W-OX*2,height:OH,rx:10,fill:'rgba(188,76,0,0.04)',stroke:'rgba(188,76,0,0.25)','stroke-width':'1.5'}));
+  svgText(s,'Old 世代（Tenured）',W/2,OY+20,{size:'0.68rem',fill:'#bc4c00',weight:'bold'});
+
+  function drawObjs(objs, rx, ry, rw) {
+    const sz = 28, pad = 5;
+    let cx = rx + pad + sz/2, cy = ry + 60;
+    objs.forEach(obj => {
+      if (cx + sz/2 > rx + rw - pad) { cx = rx + pad + sz/2; cy += sz + pad + 8; }
+      s.appendChild(el('rect',{x:cx-sz/2,y:cy-sz/2,width:sz,height:sz,rx:5,
+        fill:PALETTE[obj.c%6], stroke:PAL_STROKE[obj.c%6],'stroke-width':'1.5'}));
+      svgText(s,obj.id,cx,cy+4,{size:'0.65rem',fill:PAL_STROKE[obj.c%6],weight:'bold'});
+      if (obj.age > 0) {
+        svgText(s,`a${obj.age}`,cx,cy+sz/2+10,{size:'0.55rem',fill:'#636c76'});
+      }
+      cx += sz + pad;
+    });
+  }
+
+  drawObjs(st.eden||[], EX, 30, EW);
+  drawObjs(st.s0||[], S0X, 30, S0W);
+  drawObjs(st.s1||[], S1X, 30, S1W);
+  drawObjs(st.old||[], OX, OY, W-OX*2);
+
+  // Garbage indicator for eden
+  if (st.gbEden && st.gbEden.length > 0) {
+    svgText(s, `ガベージ: ${st.gbEden.join(', ')}`, EX+EW/2, 175, {size:'0.65rem',fill:'#cf222e'});
+  }
+
+  // Stats for Gen GC
+  const alive = (st.eden||[]).length + (st.s0||[]).length + (st.s1||[]).length + (st.old||[]).length;
+  document.getElementById('statAlive').textContent = alive;
+  document.getElementById('statDead').textContent = '—';
+}
+
+// ─── Step processing ─────────────────────────────────────
+function applyMSStep(step) {
+  if (!step.act) return;
+  const a = step.act;
+  if (a.t === 'queue') objStates[a.id] = 'queued';
+  if (a.t === 'mark')  objStates[a.id] = 'marked';
+  if (a.t === 'gb')    objStates[a.id] = 'garbage';
+  if (a.t === 'sweep') {
+    a.ids.forEach(id => { objStates[id] = 'swept'; sweptIds.add(id); });
+  }
+}
+
+function getSteps() { return currentTab === 0 ? MS_STEPS : GEN_STEPS; }
+
+function nextStep() {
+  const steps = getSteps();
+  if (stepIdx >= steps.length) return;
+  const step = steps[stepIdx];
+
+  // Apply
+  if (currentTab === 0) applyMSStep(step);
+
+  // Phase label
+  const pv = document.getElementById('phaseVal');
+  pv.className = 'phase-value';
+  if (step.ph) {
+    pv.textContent = step.ph;
+    if (step.ph.includes('Mark')) pv.classList.add('mark');
+    else if (step.ph.includes('Sweep')) pv.classList.add('sweep');
+    else if (step.ph === '完了') pv.classList.add('done');
+  }
+
+  // Explanation
+  document.getElementById('expText').innerHTML = step.text;
+
+  // Render
+  if (currentTab === 0) renderMS();
+  else renderGen(step);
+
+  stepIdx++;
+  document.getElementById('stepLbl').textContent = `${stepIdx} / ${steps.length}`;
+  if (stepIdx >= steps.length) document.getElementById('btnPlay').disabled = true;
+}
+
+function resetViz() {
+  stopAuto();
+  stepIdx = 0;
+  initMS();
+  const steps = getSteps();
+  document.getElementById('btnPlay').disabled = false;
+  document.getElementById('stepLbl').textContent = `0 / ${steps.length}`;
+  document.getElementById('phaseVal').textContent = '待機中';
+  document.getElementById('phaseVal').className = 'phase-value';
+  document.getElementById('expText').textContent = 'タブを選択して「次のステップ」または「自動再生」を押してください。';
+  document.getElementById('statDead').textContent = '0';
+  if (currentTab === 0) renderMS();
+  else renderGen(GEN_STEPS[0]);
+}
+
+function setTab(n) {
+  currentTab = n;
+  [0,1].forEach(i => document.getElementById(`tab${i}`).classList.toggle('active', i===n));
+  // Toggle legend visibility
+  document.getElementById('legend').style.display = n === 0 ? '' : 'none';
+  resetViz();
+}
+
+function stopAuto() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  isAuto = false;
+  document.getElementById('btnAuto').textContent = '↻ 自動再生';
+}
+
+function toggleAuto() {
+  if (isAuto) { stopAuto(); return; }
+  isAuto = true;
+  document.getElementById('btnAuto').textContent = '⏸ 一時停止';
+  const speed = parseInt(document.getElementById('spd').value);
+  autoTimer = setInterval(() => {
+    const steps = getSteps();
+    if (stepIdx >= steps.length) { stopAuto(); return; }
+    nextStep();
+  }, speed);
+}
+
+function onSpeed() {
+  const v = document.getElementById('spd').value;
+  document.getElementById('spdLbl').textContent = (v/1000).toFixed(1) + 's';
+  if (isAuto) { stopAuto(); toggleAuto(); }
+}
+
+// ─── Init ────────────────────────────────────────────────
+initMS();
+renderMS();
+document.getElementById('stepLbl').textContent = `0 / ${MS_STEPS.length}`;
+</script>
+</body>
+</html>

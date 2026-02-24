@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Go Goroutine &amp; Channel 可視化</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #ffffff; --surface: #f6f8fa; --surface2: #eaeef2;
+      --border: #d0d7de; --text: #1f2328; --text-muted: #636c76;
+      --green: #1a7f37; --blue: #0969da; --purple: #8250df;
+      --orange: #bc4c00; --red: #cf222e; --yellow: #9a6700;
+    }
+    body { background:var(--bg); color:var(--text); font-family:"Noto Sans","Helvetica Neue",Helvetica,Arial,sans-serif; min-height:100vh; display:flex; flex-direction:column; font-size:14px; }
+    header { padding:14px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; background:var(--surface); }
+    header h1 { font-size:1.1rem; font-weight:700; color:var(--text); }
+    .badge { background:rgba(9,105,218,0.1); color:var(--blue); border:1px solid rgba(9,105,218,0.3); font-size:0.7rem; font-weight:700; padding:2px 8px; border-radius:12px; }
+    .back-link { font-size:0.75rem; color:var(--text-muted); text-decoration:none; margin-left:auto; display:flex; align-items:center; gap:4px; transition:color .15s; }
+    .back-link:hover { color:var(--text); }
+    .tab-bar { display:flex; background:var(--surface); border-bottom:1px solid var(--border); padding:0 24px; }
+    .tab-btn { padding:10px 18px; font-size:0.82rem; font-weight:500; color:var(--text-muted); background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; transition:all 0.15s; margin-bottom:-1px; }
+    .tab-btn.active { color:var(--blue); border-bottom-color:var(--blue); font-weight:700; }
+    .tab-btn:hover:not(.active) { color:var(--text); }
+    .main { display:flex; flex:1; }
+    .svg-panel { flex:1; padding:20px 24px 16px; display:flex; flex-direction:column; align-items:center; gap:10px; }
+    #mainSvg { width:100%; max-width:700px; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
+    .svg-note { font-size:0.72rem; color:var(--text-muted); align-self:flex-start; max-width:700px; width:100%; }
+    .info-panel { width:300px; min-width:260px; border-left:1px solid var(--border); background:var(--surface); display:flex; flex-direction:column; }
+    .info-section { padding:14px 16px; border-bottom:1px solid var(--border); }
+    .info-title { font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); margin-bottom:8px; }
+    .scenario-desc { font-size:0.8rem; color:var(--text); line-height:1.65; }
+    .scenario-desc code { background:var(--surface2); padding:1px 5px; border-radius:4px; font-family:'Fira Code',Consolas,monospace; font-size:0.76rem; }
+    .step-explain { font-size:0.8rem; color:var(--text); line-height:1.75; min-height:80px; transition:opacity 0.2s; }
+    .step-explain .hl-blue   { color:var(--blue);   font-weight:700; }
+    .step-explain .hl-green  { color:var(--green);  font-weight:700; }
+    .step-explain .hl-red    { color:var(--red);    font-weight:700; }
+    .step-explain .hl-orange { color:var(--orange); font-weight:700; }
+    .step-explain code { background:var(--surface2); padding:1px 5px; border-radius:4px; font-family:'Fira Code',Consolas,monospace; font-size:0.76rem; }
+    .legend { padding:10px 16px; display:flex; flex-direction:column; gap:6px; border-bottom:1px solid var(--border); }
+    .legend-item { display:flex; align-items:center; gap:8px; font-size:0.72rem; color:var(--text-muted); }
+    .legend-box { width:14px; height:14px; border-radius:3px; flex-shrink:0; border:1.5px solid; }
+    .controls { padding:14px 16px; display:flex; flex-direction:column; gap:8px; margin-top:auto; }
+    .controls-row { display:flex; gap:8px; }
+    .btn { padding:7px 12px; border-radius:6px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.8rem; cursor:pointer; transition:all 0.15s; font-weight:500; flex:1; text-align:center; }
+    .btn:hover { background:var(--surface2); }
+    .btn.primary { background:var(--blue); color:#fff; border-color:var(--blue); font-weight:700; }
+    .btn.primary:hover { background:#0550ae; }
+    .btn:disabled { opacity:0.4; cursor:not-allowed; }
+    .step-counter { font-size:0.72rem; color:var(--text-muted); text-align:center; }
+    .step-dots { display:flex; gap:4px; justify-content:center; flex-wrap:wrap; }
+    .step-dot { width:6px; height:6px; border-radius:50%; background:var(--border); transition:background 0.2s; }
+    .step-dot.done    { background:var(--green); }
+    .step-dot.current { background:var(--blue); }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <circle cx="6"  cy="12" r="3.5" stroke="#00acd7" stroke-width="1.8"/>
+    <circle cx="18" cy="7"  r="3.5" stroke="#00acd7" stroke-width="1.8"/>
+    <circle cx="18" cy="17" r="3.5" stroke="#1a7f37" stroke-width="1.8"/>
+    <path d="M9.5 11 L14.5 8.5" stroke="#636c76" stroke-width="1.4" stroke-dasharray="2,1.5"/>
+    <path d="M9.5 13 L14.5 15.5" stroke="#1a7f37" stroke-width="1.4" stroke-dasharray="2,1.5"/>
+  </svg>
+  <h1>Go Goroutine &amp; Channel 可視化</h1>
+  <span class="badge">Interactive</span>
+  <a class="back-link" href="index.html">
+    <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+      <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
+    </svg>
+    一覧へ戻る
+  </a>
+</header>
+
+<div class="tab-bar" id="tabBar"></div>
+
+<div class="main">
+  <div class="svg-panel">
+    <svg id="mainSvg" viewBox="0 0 700 400" preserveAspectRatio="xMidYMid meet"></svg>
+    <p class="svg-note">Go ランタイムの goroutine スケジューリングと channel の動作を示しています。実際の Go スケジューラは M:N モデルを使用します。</p>
+  </div>
+
+  <div class="info-panel">
+    <div class="info-section">
+      <div class="info-title">シナリオ</div>
+      <div class="scenario-desc" id="scenarioDesc"></div>
+    </div>
+    <div class="info-section">
+      <div class="info-title">ステップ説明</div>
+      <div class="step-explain" id="stepExplain"></div>
+    </div>
+    <div class="legend">
+      <div class="info-title">凡例 — Goroutine 状態</div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(9,105,218,0.1);border-color:#0969da;"></div>
+        New（生成直後）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(26,127,55,0.12);border-color:#1a7f37;"></div>
+        Running（実行中）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(154,103,0,0.1);border-color:#9a6700;"></div>
+        Blocked（チャネル待機）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:#f6f8fa;border-color:#d0d7de;"></div>
+        Done（終了）
+      </div>
+    </div>
+    <div class="controls">
+      <div class="controls-row">
+        <button class="btn" id="btnPrev" onclick="prevStep()">◀ 前へ</button>
+        <button class="btn primary" id="btnNext" onclick="nextStep()">次へ ▶</button>
+      </div>
+      <div class="controls-row">
+        <button class="btn" id="btnAuto" onclick="toggleAuto()">▶ 自動再生</button>
+        <button class="btn" onclick="resetScenario()">↺ リセット</button>
+      </div>
+      <div class="step-counter" id="stepCounter">ステップ: 1 / 1</div>
+      <div class="step-dots" id="stepDots"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── SVG helpers ──────────────────────────────────────────────
+const svgNS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs, text) {
+  const e = document.createElementNS(svgNS, tag);
+  if (attrs) Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, String(v)));
+  if (text != null) e.textContent = text;
+  return e;
+}
+function svgTxt(parent, txt, x, y, opts) {
+  opts = opts || {};
+  const t = svgEl('text', {
+    x, y,
+    'text-anchor': opts.anchor || 'middle',
+    'font-size':   opts.size   || 11,
+    fill:          opts.fill   || '#1f2328',
+    'font-weight': opts.weight || 'normal',
+    'font-family': opts.mono ? 'Fira Code,Consolas,monospace' : '"Noto Sans",sans-serif'
+  }, txt);
+  parent.appendChild(t);
+  return t;
+}
+
+// ── Layout ───────────────────────────────────────────────────
+const GR_X  = 8,   GR_W  = 310;  // goroutine pane
+const CH_X  = 330, CH_W  = 364;  // channel pane
+const PANE_TOP = 8, PANE_H = 390;
+const GR_ROW_H = 68, GR_ROW_Y0 = 42;
+
+// ── Goroutine colors ─────────────────────────────────────────
+const GR_COLORS = {
+  new:     { fill:'rgba(9,105,218,0.10)',  stroke:'#0969da', text:'#0550ae' },
+  running: { fill:'rgba(26,127,55,0.12)',  stroke:'#1a7f37', text:'#1a7f37' },
+  blocked: { fill:'rgba(154,103,0,0.10)', stroke:'#9a6700', text:'#7d5700' },
+  done:    { fill:'#f6f8fa',              stroke:'#d0d7de', text:'#636c76' },
+};
+
+// ── Render ───────────────────────────────────────────────────
+function renderSnapshot(snap) {
+  const svg = document.getElementById('mainSvg');
+  svg.innerHTML = '';
+  const goroutines = snap.goroutines || [];
+  const channels   = snap.channels   || [];
+  const arrows     = snap.arrows     || [];
+
+  const grH = Math.max(160, goroutines.length * GR_ROW_H + GR_ROW_Y0 + 8);
+  const pH  = Math.min(Math.max(grH, 200), PANE_H);
+
+  // ── Goroutine pane ─────────────────────────────────────
+  svg.appendChild(svgEl('rect', {
+    x:GR_X, y:PANE_TOP, width:GR_W, height:pH, rx:8,
+    fill:'rgba(9,105,218,0.025)', stroke:'rgba(9,105,218,0.25)', 'stroke-width':1.5
+  }));
+  svgTxt(svg, 'Goroutines', GR_X + GR_W/2, PANE_TOP + 17, { size:11, weight:'700', fill:'#0969da' });
+
+  goroutines.forEach(function(gr, i) {
+    const ry = PANE_TOP + GR_ROW_Y0 + i * GR_ROW_H;
+    const c  = GR_COLORS[gr.state] || GR_COLORS.done;
+    const hl = gr.highlight;
+    svg.appendChild(svgEl('rect', {
+      x:GR_X+8, y:ry, width:GR_W-16, height:GR_ROW_H-8, rx:6,
+      fill: hl ? 'rgba(9,105,218,0.2)' : c.fill,
+      stroke: hl ? '#0969da' : c.stroke,
+      'stroke-width': hl ? 2.2 : 1.5
+    }));
+    svgTxt(svg, gr.id, GR_X + 28, ry + 22, { size:13, weight:'700', fill:c.text, anchor:'start' });
+    svgTxt(svg, gr.state, GR_X + 28, ry + 38, { size:10, fill:c.text, mono:true, anchor:'start' });
+    if (gr.op) {
+      const bx = GR_X + GR_W - 118, by = ry + 10, bw = 108, bh = 20;
+      svg.appendChild(svgEl('rect', { x:bx, y:by, width:bw, height:bh, rx:4,
+        fill:'rgba(9,105,218,0.1)', stroke:'rgba(9,105,218,0.4)', 'stroke-width':1 }));
+      svgTxt(svg, gr.op, bx + bw/2, by + 14, { size:9, weight:'700', fill:'#0550ae', mono:true });
+    }
+    if (gr.note) {
+      svgTxt(svg, gr.note, GR_X + 28, ry + 54, { size:9, fill:'#636c76', anchor:'start' });
+    }
+  });
+
+  // ── Channel pane ───────────────────────────────────────
+  svg.appendChild(svgEl('rect', {
+    x:CH_X, y:PANE_TOP, width:CH_W, height:pH, rx:8,
+    fill:'rgba(26,127,55,0.02)', stroke:'rgba(26,127,55,0.25)', 'stroke-width':1.5
+  }));
+  svgTxt(svg, 'Channel', CH_X + CH_W/2, PANE_TOP + 17, { size:11, weight:'700', fill:'#1a7f37' });
+
+  channels.forEach(function(ch, ci) {
+    const chY0 = PANE_TOP + 30 + ci * 185;
+    drawChannel(svg, ch, CH_X + 14, chY0, CH_W - 28);
+  });
+
+  // ── Arrows (goroutine ↔ channel) ───────────────────────
+  arrows.forEach(function(a) {
+    const gr = goroutines[a.grIdx];
+    if (!gr) return;
+    const ty = PANE_TOP + GR_ROW_Y0 + a.grIdx * GR_ROW_H + GR_ROW_H/2 - 4;
+    const cy = (a.chY !== undefined) ? a.chY : PANE_TOP + 100;
+    const x1 = GR_X + GR_W - 2, x2 = CH_X + 10;
+    const color = a.color || '#0969da';
+    const dash  = a.dash ? '5,3' : null;
+    svg.appendChild(svgEl('line', {
+      x1, y1:ty, x2, y2:cy, stroke:color, 'stroke-width':1.6,
+      ...(dash ? {'stroke-dasharray':dash} : {})
+    }));
+    const dx = x2-x1, dy = cy-ty, len = Math.hypot(dx,dy);
+    if (len > 5) {
+      const ux=dx/len, uy=dy/len, ex=x2-ux*7, ey=cy-uy*7;
+      svg.appendChild(svgEl('polygon', {
+        points: x2+','+cy+' '+(ex-uy*3)+','+(ey+ux*3)+' '+(ex+uy*3)+','+(ey-ux*3),
+        fill:color
+      }));
+    }
+    if (a.label) {
+      svgTxt(svg, a.label, (x1+x2)/2, Math.min(ty,cy) + Math.abs(cy-ty)/2 - 4,
+        { size:9.5, fill:color, weight:'700', mono:true });
+    }
+  });
+}
+
+function drawChannel(svg, ch, x, y, w) {
+  // Channel header box
+  svg.appendChild(svgEl('rect', {
+    x, y: y+4, width:w, height:32, rx:6,
+    fill: ch.highlight ? 'rgba(26,127,55,0.2)' : 'rgba(26,127,55,0.08)',
+    stroke: ch.highlight ? '#1a7f37' : 'rgba(26,127,55,0.4)',
+    'stroke-width': ch.highlight ? 2 : 1.5
+  }));
+  svgTxt(svg, 'make(chan ' + (ch.valType||'int') + (ch.cap ? ', '+ch.cap : '') + ')',
+    x + w/2, y + 25, { size:11, weight:'700', fill:'#1a7f37', mono:true });
+  svgTxt(svg, ch.name, x + 12, y + 25, { size:11, weight:'700', fill:'#1a7f37', anchor:'start' });
+
+  const typeLabel = ch.cap ? 'buffered(' + ch.cap + ')' : 'unbuffered';
+  svgTxt(svg, typeLabel, x + w - 6, y + 25, { size:9, fill:'#636c76', anchor:'end' });
+
+  if (ch.cap) {
+    // Buffered: draw slots
+    const slotW = Math.min(52, (w - 16) / ch.cap);
+    const slotH = 34, slotY = y + 44;
+    const startX = x + (w - slotW * ch.cap) / 2;
+    for (let i = 0; i < ch.cap; i++) {
+      const sx = startX + i * slotW;
+      const filled = i < (ch.items || []).length;
+      const val = filled ? ch.items[i] : null;
+      svg.appendChild(svgEl('rect', {
+        x:sx+2, y:slotY, width:slotW-4, height:slotH, rx:4,
+        fill: filled ? 'rgba(26,127,55,0.15)' : 'rgba(255,255,255,0.8)',
+        stroke: filled ? '#1a7f37' : '#d0d7de', 'stroke-width':1.5
+      }));
+      if (filled) {
+        svgTxt(svg, String(val), sx + slotW/2, slotY + 22, { size:13, weight:'700', fill:'#1a7f37' });
+      } else {
+        svgTxt(svg, '_', sx + slotW/2, slotY + 22, { size:13, fill:'#d0d7de' });
+      }
+    }
+    // Full / empty indicator
+    if (ch.items && ch.items.length >= ch.cap) {
+      svgTxt(svg, 'FULL — 次の送信はブロック', x + w/2, slotY + slotH + 18,
+        { size:10, weight:'700', fill:'#cf222e' });
+    }
+    // Sender waiting
+    if (ch.senderWaiting) {
+      svgTxt(svg, '↑ ' + ch.senderWaiting + ' が送信待ち（blocked）', x + w/2, slotY + slotH + 34,
+        { size:9.5, fill:'#9a6700', weight:'700' });
+    }
+  } else {
+    // Unbuffered: show sync state
+    const syncY = y + 50;
+    if (ch.syncing) {
+      svg.appendChild(svgEl('rect', {
+        x: x + w/2 - 60, y: syncY, width:120, height:36, rx:6,
+        fill:'rgba(26,127,55,0.15)', stroke:'#1a7f37', 'stroke-width':2
+      }));
+      svgTxt(svg, '⇄  RENDEZVOUS', x + w/2, syncY + 14, { size:11, weight:'700', fill:'#1a7f37' });
+      svgTxt(svg, ch.syncing, x + w/2, syncY + 28, { size:9.5, fill:'#1a7f37', mono:true });
+    } else if (ch.senderWaiting) {
+      svg.appendChild(svgEl('rect', {
+        x: x + 8, y: syncY, width: w - 16, height:30, rx:5,
+        fill:'rgba(154,103,0,0.1)', stroke:'#9a6700', 'stroke-width':1.5, 'stroke-dasharray':'5,3'
+      }));
+      svgTxt(svg, ch.senderWaiting + ' が送信待ち…', x + w/2, syncY + 19, { size:10, fill:'#7d5700', weight:'700' });
+    } else if (ch.receiverWaiting) {
+      svg.appendChild(svgEl('rect', {
+        x: x + 8, y: syncY, width: w - 16, height:30, rx:5,
+        fill:'rgba(154,103,0,0.1)', stroke:'#9a6700', 'stroke-width':1.5, 'stroke-dasharray':'5,3'
+      }));
+      svgTxt(svg, ch.receiverWaiting + ' が受信待ち…', x + w/2, syncY + 19, { size:10, fill:'#7d5700', weight:'700' });
+    } else {
+      svgTxt(svg, '空（送受信なし）', x + w/2, syncY + 18, { size:10, fill:'#9ca3af' });
+    }
+  }
+}
+
+// ============================================================
+// Scenarios
+// ============================================================
+const SCENARIOS = [
+
+  // ── Scenario 1: Unbuffered Channel ───────────────────────
+  {
+    name: '① Unbuffered Channel',
+    description: '<code>make(chan int)</code> で作った <strong>unbuffered channel</strong> は、送信と受信が同時に揃うまで両方をブロックします。これを <strong>Rendezvous（ランデブー）</strong> と呼びます。',
+    steps: [
+      {
+        goroutines: [{ id:'G.main', state:'running', op:'main() 開始' }],
+        channels:   [{ name:'ch', cap:0 }],
+        arrows: [],
+        explain: '<code>func main()</code> が起動します。<br>まず <code>ch := make(chan int)</code> で <strong>unbuffered channel</strong> を作成します。<br>unbuffered channel はバッファを持たず、送受信が同時に行われないとどちらかがブロックします。'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'running', op:'go sender()' },
+          { id:'G1 (sender)', state:'new', note:'起動直後' },
+        ],
+        channels: [{ name:'ch', cap:0 }],
+        arrows: [],
+        explain: '<span class="hl-blue"><code>go sender()</code> で G1 を起動。</span><br><code>go</code> キーワードは goroutine を生成し、<strong>即座にリターン</strong>します。G.main は待機しません。<br>Go ランタイムが G1 をスケジュールします（M:N スレッドモデル）。'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'running', op:'v := <-ch 待機中' },
+          { id:'G1 (sender)', state:'blocked', op:'ch <- 42', note:'受信者を待っている' },
+        ],
+        channels: [{ name:'ch', cap:0, senderWaiting:'G1 (ch <- 42)' }],
+        arrows: [{ grIdx:1, chY:110, color:'#9a6700', label:'ch <- 42', dash:true }],
+        explain: '<span class="hl-orange">G1 が <code>ch &lt;- 42</code> を実行 → ブロック。</span><br>unbuffered channel に送信しても受信者がいないためブロックします。<br>同時に G.main が <code>v := &lt;-ch</code> を実行し、受信待ちになります。'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'running', op:'v := <-ch', highlight:true },
+          { id:'G1 (sender)', state:'running', op:'ch <- 42', highlight:true },
+        ],
+        channels: [{ name:'ch', cap:0, syncing:'42 を転送中', highlight:true }],
+        arrows: [
+          { grIdx:1, chY:118, color:'#1a7f37', label:'42 →' },
+          { grIdx:0, chY:118, color:'#1a7f37', label:'→ v=42', dash:false },
+        ],
+        explain: '<span class="hl-green">Rendezvous（ランデブー）！</span><br>G1（送信）と G.main（受信）が同時に揃いました。<br>値 <strong>42</strong> がコピーされ、両方が同時にブロック解除されます。<br>これが unbuffered channel の同期プリミティブとしての役割です。'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'running', op:'v=42 取得済み' },
+          { id:'G1 (sender)', state:'done', op:'return' },
+        ],
+        channels: [{ name:'ch', cap:0 }],
+        arrows: [],
+        explain: '<span class="hl-green">転送完了。</span><br>G1 は <code>ch &lt;- 42</code> の後、処理を続けて終了します。<br>G.main は <code>v = 42</code> を受け取り、処理を続けます。<br>unbuffered channel は<strong>同期</strong>の手段として機能しました。'
+      },
+    ]
+  },
+
+  // ── Scenario 2: Buffered Channel ─────────────────────────
+  {
+    name: '② Buffered Channel',
+    description: '<code>make(chan int, N)</code> で作った <strong>buffered channel</strong> は容量 N までの送信をブロックなしで行えます。バッファが満杯になった場合のみ送信側がブロックします。',
+    steps: [
+      {
+        goroutines: [{ id:'G.main', state:'running', op:'make(chan int, 2)' }],
+        channels: [{ name:'ch', cap:2, items:[] }],
+        arrows: [],
+        explain: '<code>ch := make(chan int, 2)</code> でバッファサイズ 2 の buffered channel を作成。<br>スロット 2 つが空の状態です。<br>受信者がいなくても、バッファが満杯になるまで <strong>送信はブロックしません</strong>。'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'running' },
+          { id:'G1 (sender)', state:'running', op:'ch <- 10' },
+        ],
+        channels: [{ name:'ch', cap:2, items:[10] }],
+        arrows: [{ grIdx:1, chY:120, color:'#1a7f37', label:'10 →' }],
+        explain: '<span class="hl-green">G1 が <code>ch &lt;- 10</code> を送信 → ブロックなし。</span><br>バッファにスロットが空いているため、即座に格納されます。G1 は処理を続けます。<br>バッファ: [10, _]'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'running' },
+          { id:'G1 (sender)', state:'running', op:'ch <- 20' },
+        ],
+        channels: [{ name:'ch', cap:2, items:[10, 20] }],
+        arrows: [{ grIdx:1, chY:120, color:'#1a7f37', label:'20 →' }],
+        explain: '<span class="hl-green">G1 が <code>ch &lt;- 20</code> を送信 → ブロックなし。</span><br>バッファが満杯（容量 2）になりました。<br>バッファ: [10, 20] ← FULL'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'running' },
+          { id:'G1 (sender)', state:'blocked', op:'ch <- 30', note:'バッファ満杯で待機中' },
+        ],
+        channels: [{ name:'ch', cap:2, items:[10, 20], senderWaiting:'G1 (ch <- 30)' }],
+        arrows: [{ grIdx:1, chY:130, color:'#9a6700', label:'ch <- 30', dash:true }],
+        explain: '<span class="hl-orange">G1 が <code>ch &lt;- 30</code> を試みる → ブロック！</span><br>バッファが満杯（FULL）のため、送信できません。<br>受信者がバッファから値を取り出すまで G1 はブロックされます。'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'running' },
+          { id:'G1 (sender)', state:'blocked', op:'ch <- 30（待機中）' },
+          { id:'G2 (receiver)', state:'running', op:'x := <-ch → 10' },
+        ],
+        channels: [{ name:'ch', cap:2, items:[20] }],
+        arrows: [{ grIdx:2, chY:120, color:'#0969da', label:'<- 10', dash:false }],
+        explain: '<span class="hl-blue">G2 が <code>x := &lt;-ch</code> → バッファから 10 を取得。</span><br>バッファに空きが生まれたため、G1 のブロックが解除されます。<br>バッファ: [20, _]（G1 は 30 を送信可能に）'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'running' },
+          { id:'G1 (sender)', state:'done', op:'ch <- 30 完了' },
+          { id:'G2 (receiver)', state:'running', op:'x = 10 取得済み' },
+        ],
+        channels: [{ name:'ch', cap:2, items:[20, 30] }],
+        arrows: [],
+        explain: '<span class="hl-green">G1 がブロック解除され <code>ch &lt;- 30</code> が完了。</span><br>バッファ: [20, 30]<br>G1 は処理を続けて終了。G2 は値 10 を処理中。<br>Buffered channel は<strong>非同期バッファ</strong>として producer/consumer パターンに適しています。'
+      },
+    ]
+  },
+
+  // ── Scenario 3: select 文 ───────────────────────────────
+  {
+    name: '③ select 文',
+    description: '<code>select</code> 文は複数の channel 操作を同時に待機し、<strong>準備できた最初のケース</strong>を実行します。どちらも準備できている場合はランダムに選択されます。',
+    steps: [
+      {
+        goroutines: [
+          { id:'G.main', state:'running', op:'select 待機中', note:'ch1 または ch2 を待つ' },
+          { id:'G1', state:'new', note:'ch1 に送信予定' },
+          { id:'G2', state:'new', note:'ch2 に送信予定' },
+        ],
+        channels: [
+          { name:'ch1', cap:0 },
+          { name:'ch2', cap:0 },
+        ],
+        arrows: [],
+        explain: '<code>select</code> 文の開始。G.main は 2 つの unbuffered channel を待ちます：<br><code>select {</code><br><code>  case v := &lt;-ch1:</code><br><code>  case v := &lt;-ch2:</code><br><code>}</code><br>どちらかのチャネルで受信できるまで G.main はブロックします。'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'blocked', op:'select 待機中', note:'ch1 または ch2 を待つ' },
+          { id:'G1', state:'running', op:'ch1 <- "hello"', note:'ch1 に送信中' },
+          { id:'G2', state:'running', op:'ch2 <- "world"', note:'ch2 に送信中' },
+        ],
+        channels: [
+          { name:'ch1', cap:0, senderWaiting:'G1 (ch1 <- "hello")' },
+          { name:'ch2', cap:0, senderWaiting:'G2 (ch2 <- "world")' },
+        ],
+        arrows: [
+          { grIdx:1, chY:118, color:'#9a6700', label:'ch1 <- "hello"', dash:true },
+          { grIdx:2, chY:300, color:'#9a6700', label:'ch2 <- "world"', dash:true },
+        ],
+        explain: '<span class="hl-orange">G1 が ch1 へ、G2 が ch2 へ同時に送信を試みます。</span><br>両方の goroutine が G.main との Rendezvous を待っています。<br>G.main の select は準備できた最初のケースを選びます。'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'running', op:'case v := <-ch1 選択！', highlight:true },
+          { id:'G1', state:'done', op:'ch1 送信完了' },
+          { id:'G2', state:'blocked', op:'ch2 <- "world" 待機', note:'受信者なしで待機中' },
+        ],
+        channels: [
+          { name:'ch1', cap:0, syncing:'"hello" を転送完了', highlight:true },
+          { name:'ch2', cap:0, senderWaiting:'G2（まだ待機中）' },
+        ],
+        arrows: [
+          { grIdx:0, chY:118, color:'#1a7f37', label:'v = "hello"' },
+        ],
+        explain: '<span class="hl-green">select が ch1 を選択！</span><br>G1 の送信と G.main の受信がランデブーしました。v = "hello"。<br>G2 は引き続き ch2 への送信を待っています（別の goroutine が受信するか、キャンセルが必要）。<br>select の強み: <strong>タイムアウトや default ケース</strong>と組み合わせて柔軟な非同期制御が可能です。'
+      },
+      {
+        goroutines: [
+          { id:'G.main', state:'running', op:'ch2 受信: go recv(ch2)' },
+          { id:'G1', state:'done' },
+          { id:'G2', state:'done', op:'ch2 送信完了' },
+          { id:'G3 (cleaner)', state:'running', op:'x := <-ch2 → "world"' },
+        ],
+        channels: [
+          { name:'ch1', cap:0 },
+          { name:'ch2', cap:0, syncing:'"world" を転送', highlight:true },
+        ],
+        arrows: [
+          { grIdx:3, chY:300, color:'#1a7f37', label:'<-ch2' },
+        ],
+        explain: '<span class="hl-blue">G3 が ch2 を受信し G2 のブロックを解除。</span><br>select に選ばれなかった G2 は、別の goroutine で回収します。<br>実践的には <code>select</code> に <code>default</code> や <code>context.WithTimeout</code> を加えることで、無限待ちを防ぎます。<br>→ select + channel は Go の並行処理の核心です。'
+      },
+    ]
+  },
+];
+
+// ============================================================
+// State & Controls
+// ============================================================
+let currentScenario = 0;
+let currentStep = 0;
+let autoTimer = null;
+
+function renderStep() {
+  const sc   = SCENARIOS[currentScenario];
+  const step = sc.steps[currentStep];
+  renderSnapshot(step);
+  const el = document.getElementById('stepExplain');
+  el.style.opacity = 0;
+  setTimeout(function() { el.innerHTML = step.explain || ''; el.style.opacity = 1; }, 100);
+  document.getElementById('btnPrev').disabled = currentStep === 0;
+  document.getElementById('btnNext').disabled = currentStep >= sc.steps.length - 1;
+  updateStepCounter();
+}
+function nextStep() {
+  if (currentStep < SCENARIOS[currentScenario].steps.length - 1) { currentStep++; renderStep(); }
+}
+function prevStep() {
+  if (currentStep > 0) { currentStep--; renderStep(); }
+}
+function resetScenario() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  currentStep = 0;
+  document.getElementById('btnAuto').textContent = '▶ 自動再生';
+  renderStep();
+}
+function toggleAuto() {
+  if (autoTimer) {
+    clearInterval(autoTimer); autoTimer = null;
+    document.getElementById('btnAuto').textContent = '▶ 自動再生';
+  } else {
+    document.getElementById('btnAuto').textContent = '⏸ 停止';
+    autoTimer = setInterval(function() {
+      if (currentStep >= SCENARIOS[currentScenario].steps.length - 1) {
+        clearInterval(autoTimer); autoTimer = null;
+        document.getElementById('btnAuto').textContent = '▶ 自動再生';
+        return;
+      }
+      nextStep();
+    }, 1800);
+  }
+}
+function selectScenario(idx) {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  currentScenario = idx; currentStep = 0;
+  document.getElementById('btnAuto').textContent = '▶ 自動再生';
+  document.querySelectorAll('.tab-btn').forEach(function(b, i) { b.classList.toggle('active', i===idx); });
+  document.getElementById('scenarioDesc').innerHTML = SCENARIOS[idx].description;
+  renderStep();
+}
+function updateStepCounter() {
+  const sc = SCENARIOS[currentScenario];
+  document.getElementById('stepCounter').textContent = 'ステップ: ' + (currentStep+1) + ' / ' + sc.steps.length;
+  const dots = document.getElementById('stepDots');
+  dots.innerHTML = '';
+  sc.steps.forEach(function(_, i) {
+    const d = document.createElement('div');
+    d.className = 'step-dot' + (i < currentStep ? ' done' : i === currentStep ? ' current' : '');
+    dots.appendChild(d);
+  });
+}
+
+(function init() {
+  const tabBar = document.getElementById('tabBar');
+  SCENARIOS.forEach(function(sc, i) {
+    const btn = document.createElement('button');
+    btn.className = 'tab-btn' + (i===0 ? ' active' : '');
+    btn.textContent = sc.name;
+    btn.onclick = function() { selectScenario(i); };
+    tabBar.appendChild(btn);
+  });
+  document.getElementById('scenarioDesc').innerHTML = SCENARIOS[0].description;
+  renderStep();
+})();
+</script>
+</body>
+</html>

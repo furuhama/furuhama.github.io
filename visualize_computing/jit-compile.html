@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JIT Compile 可視化</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #ffffff; --surface: #f6f8fa; --surface2: #eaeef2;
+      --border: #d0d7de; --text: #1f2328; --text-muted: #636c76;
+      --green: #1a7f37; --blue: #0969da; --purple: #8250df;
+      --orange: #bc4c00; --red: #cf222e; --yellow: #9a6700;
+    }
+    body { background:var(--bg); color:var(--text); font-family:"Noto Sans","Helvetica Neue",Helvetica,Arial,sans-serif; min-height:100vh; display:flex; flex-direction:column; font-size:14px; }
+    header { padding:14px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; background:var(--surface); }
+    header h1 { font-size:1.1rem; font-weight:700; color:var(--text); }
+    .badge { background:rgba(130,80,223,0.1); color:var(--purple); border:1px solid rgba(130,80,223,0.3); font-size:0.7rem; font-weight:700; padding:2px 8px; border-radius:12px; }
+    .back-link { font-size:0.75rem; color:var(--text-muted); text-decoration:none; margin-left:auto; display:flex; align-items:center; gap:4px; }
+    .back-link:hover { color:var(--text); }
+    .tab-bar { display:flex; background:var(--surface); border-bottom:1px solid var(--border); padding:0 24px; }
+    .tab-btn { padding:10px 18px; font-size:0.82rem; font-weight:500; color:var(--text-muted); background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; transition:all 0.15s; margin-bottom:-1px; }
+    .tab-btn.active { color:var(--purple); border-bottom-color:var(--purple); font-weight:700; }
+    .tab-btn:hover:not(.active) { color:var(--text); }
+    .main { display:flex; flex:1; }
+    .svg-panel { flex:1; padding:20px 24px 16px; display:flex; flex-direction:column; align-items:center; gap:10px; }
+    #mainSvg { width:100%; max-width:700px; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
+    .svg-note { font-size:0.72rem; color:var(--text-muted); align-self:flex-start; max-width:700px; width:100%; }
+    .info-panel { width:300px; min-width:260px; border-left:1px solid var(--border); background:var(--surface); display:flex; flex-direction:column; }
+    .info-section { padding:14px 16px; border-bottom:1px solid var(--border); }
+    .info-title { font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); margin-bottom:8px; }
+    .scenario-desc { font-size:0.8rem; color:var(--text); line-height:1.65; }
+    .scenario-desc code { background:var(--surface2); padding:1px 5px; border-radius:4px; font-family:'Fira Code',Consolas,monospace; font-size:0.76rem; }
+    .step-explain { font-size:0.8rem; color:var(--text); line-height:1.75; min-height:80px; transition:opacity 0.2s; }
+    .step-explain .hl-blue   { color:var(--blue);   font-weight:700; }
+    .step-explain .hl-green  { color:var(--green);  font-weight:700; }
+    .step-explain .hl-red    { color:var(--red);    font-weight:700; }
+    .step-explain .hl-purple { color:var(--purple); font-weight:700; }
+    .step-explain .hl-orange { color:var(--orange); font-weight:700; }
+    .step-explain code { background:var(--surface2); padding:1px 5px; border-radius:4px; font-family:'Fira Code',Consolas,monospace; font-size:0.76rem; }
+    .legend { padding:10px 16px; display:flex; flex-direction:column; gap:6px; border-bottom:1px solid var(--border); }
+    .legend-item { display:flex; align-items:center; gap:8px; font-size:0.72rem; color:var(--text-muted); }
+    .legend-box { width:14px; height:14px; border-radius:3px; flex-shrink:0; border:1.5px solid; }
+    .controls { padding:14px 16px; display:flex; flex-direction:column; gap:8px; margin-top:auto; }
+    .controls-row { display:flex; gap:8px; }
+    .btn { padding:7px 12px; border-radius:6px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.8rem; cursor:pointer; transition:all 0.15s; font-weight:500; flex:1; text-align:center; }
+    .btn:hover { background:var(--surface2); }
+    .btn.primary { background:var(--purple); color:#fff; border-color:var(--purple); font-weight:700; }
+    .btn.primary:hover { background:#6e43be; }
+    .btn:disabled { opacity:0.4; cursor:not-allowed; }
+    .step-counter { font-size:0.72rem; color:var(--text-muted); text-align:center; }
+    .step-dots { display:flex; gap:4px; justify-content:center; flex-wrap:wrap; }
+    .step-dot { width:6px; height:6px; border-radius:50%; background:var(--border); transition:background 0.2s; }
+    .step-dot.done    { background:var(--green); }
+    .step-dot.current { background:var(--purple); }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <rect x="2" y="5" width="8" height="14" rx="2" stroke="#636c76" stroke-width="1.6"/>
+    <path d="M5 9h2M5 12h2M5 15h2" stroke="#636c76" stroke-width="1.4" stroke-linecap="round"/>
+    <path d="M12 12 L16 12" stroke="#8250df" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M15 9 L19 12 L15 15" stroke="#8250df" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="19" y="7" width="3" height="10" rx="1" fill="#1a7f37" opacity="0.8"/>
+  </svg>
+  <h1>JIT Compile 可視化</h1>
+  <span class="badge">Interactive</span>
+  <a class="back-link" href="index.html">
+    <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+      <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
+    </svg>
+    一覧へ戻る
+  </a>
+</header>
+
+<div class="tab-bar" id="tabBar"></div>
+
+<div class="main">
+  <div class="svg-panel">
+    <svg id="mainSvg" viewBox="0 0 700 400" preserveAspectRatio="xMidYMid meet"></svg>
+    <p class="svg-note">V8 エンジン（Node.js / Chrome）の JIT パイプラインを基にした可視化です。実際のエンジンによって詳細は異なります。</p>
+  </div>
+
+  <div class="info-panel">
+    <div class="info-section">
+      <div class="info-title">シナリオ</div>
+      <div class="scenario-desc" id="scenarioDesc"></div>
+    </div>
+    <div class="info-section">
+      <div class="info-title">ステップ説明</div>
+      <div class="step-explain" id="stepExplain"></div>
+    </div>
+    <div class="legend">
+      <div class="info-title">凡例 — コード状態</div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:#f6f8fa;border-color:#d0d7de;"></div>
+        Bytecode（インタープリタ実行）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(154,103,0,0.1);border-color:#9a6700;"></div>
+        Warm（プロファイリング中）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(130,80,223,0.1);border-color:#8250df;"></div>
+        Optimized（JIT コンパイル済）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(207,34,46,0.1);border-color:#cf222e;"></div>
+        Deoptimized（再インタープリタ）
+      </div>
+    </div>
+    <div class="controls">
+      <div class="controls-row">
+        <button class="btn" id="btnPrev" onclick="prevStep()">◀ 前へ</button>
+        <button class="btn primary" id="btnNext" onclick="nextStep()">次へ ▶</button>
+      </div>
+      <div class="controls-row">
+        <button class="btn" id="btnAuto" onclick="toggleAuto()">▶ 自動再生</button>
+        <button class="btn" onclick="resetScenario()">↺ リセット</button>
+      </div>
+      <div class="step-counter" id="stepCounter">ステップ: 1 / 1</div>
+      <div class="step-dots" id="stepDots"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── SVG helpers ──────────────────────────────────────────────
+const svgNS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs, text) {
+  const e = document.createElementNS(svgNS, tag);
+  if (attrs) Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, String(v)));
+  if (text != null) e.textContent = text;
+  return e;
+}
+function svgTxt(parent, txt, x, y, opts) {
+  opts = opts || {};
+  const t = svgEl('text', {
+    x, y, 'text-anchor': opts.anchor||'middle', 'font-size': opts.size||11,
+    fill: opts.fill||'#1f2328', 'font-weight': opts.weight||'normal',
+    'font-family': opts.mono ? 'Fira Code,Consolas,monospace' : '"Noto Sans",sans-serif'
+  }, txt);
+  parent.appendChild(t);
+  return t;
+}
+function arrow(svg, x1, y1, x2, y2, color, dash) {
+  svg.appendChild(svgEl('line', {
+    x1, y1, x2, y2, stroke:color, 'stroke-width':2,
+    ...(dash ? {'stroke-dasharray':dash} : {})
+  }));
+  const dx=x2-x1, dy=y2-y1, len=Math.hypot(dx,dy);
+  if (len < 5) return;
+  const ux=dx/len, uy=dy/len, ex=x2-ux*8, ey=y2-uy*8;
+  svg.appendChild(svgEl('polygon', {
+    points: x2+','+y2+' '+(ex-uy*4)+','+(ey+ux*4)+' '+(ex+uy*4)+','+(ey-ux*4), fill:color
+  }));
+}
+
+// ── Pipeline stage definitions ───────────────────────────────
+// Stages are laid out as a horizontal pipeline
+// x positions for 5 stages across 700px
+const STAGES = [
+  { id:'source',    label:'Source Code',   x:20,  w:108, color:'#636c76',  bg:'rgba(100,100,100,0.07)' },
+  { id:'bytecode',  label:'Bytecode',      x:148, w:108, color:'#0969da',  bg:'rgba(9,105,218,0.07)' },
+  { id:'ignition',  label:'Ignition',      x:276, w:108, color:'#1a7f37',  bg:'rgba(26,127,55,0.07)' },
+  { id:'turbofan',  label:'TurboFan',      x:404, w:108, color:'#8250df',  bg:'rgba(130,80,223,0.08)' },
+  { id:'native',    label:'Native Code',   x:532, w:148, color:'#1a7f37',  bg:'rgba(26,127,55,0.10)' },
+];
+const PIPE_Y = 12, PIPE_H = 90;
+// Function execution bar sits below the pipeline
+const EXEC_Y = 130;
+const EXEC_H = 220;
+
+function renderSnapshot(snap) {
+  const svg = document.getElementById('mainSvg');
+  svg.innerHTML = '';
+
+  const activeStage = snap.activeStage || null;
+  const execBars    = snap.execBars   || [];
+  const flowArrows  = snap.flowArrows || [];
+  const metrics     = snap.metrics    || [];
+  const deoptBolt   = snap.deopt      || false;
+
+  // ── Pipeline stages ────────────────────────────────────
+  STAGES.forEach(function(st) {
+    const isActive = st.id === activeStage;
+    svg.appendChild(svgEl('rect', {
+      x:st.x, y:PIPE_Y, width:st.w, height:PIPE_H, rx:8,
+      fill: isActive ? st.bg.replace('0.07', '0.18').replace('0.08','0.2').replace('0.10','0.2') : st.bg,
+      stroke: st.color,
+      'stroke-width': isActive ? 2.5 : 1.5,
+      ...(isActive ? {} : {opacity:'0.7'})
+    }));
+    svgTxt(svg, st.label, st.x + st.w/2, PIPE_Y + 20, { size:11, weight:'700', fill:st.color });
+    if (snap.stageLabels && snap.stageLabels[st.id]) {
+      const lines = snap.stageLabels[st.id];
+      lines.forEach(function(line, li) {
+        svgTxt(svg, line, st.x + st.w/2, PIPE_Y + 38 + li*16, { size:9.5, fill:st.color, mono:true });
+      });
+    }
+  });
+
+  // ── Arrows between stages ──────────────────────────────
+  flowArrows.forEach(function(fa) {
+    const from = STAGES.find(function(s){ return s.id === fa.from; });
+    const to   = STAGES.find(function(s){ return s.id === fa.to;   });
+    if (!from || !to) return;
+    const x1 = from.x + from.w, y1 = PIPE_Y + PIPE_H/2;
+    const x2 = to.x, y2 = PIPE_Y + PIPE_H/2;
+    arrow(svg, x1, y1, x2, y2, fa.color || '#8250df', fa.dash || null);
+    if (fa.label) {
+      svgTxt(svg, fa.label, (x1+x2)/2, y1 - 6, { size:9, fill: fa.color || '#8250df', weight:'700' });
+    }
+  });
+
+  // ── Deopt arrow (turbofan → ignition, red curved) ──────
+  if (deoptBolt) {
+    const tf = STAGES.find(function(s){ return s.id === 'turbofan'; });
+    const ig = STAGES.find(function(s){ return s.id === 'ignition'; });
+    const x1 = tf.x + tf.w/2, y1 = PIPE_Y + PIPE_H;
+    const x2 = ig.x + ig.w/2, y2 = PIPE_Y + PIPE_H;
+    const cy = PIPE_Y + PIPE_H + 28;
+    svg.appendChild(svgEl('path', {
+      d: 'M'+x1+','+y1+' Q'+(x1+x2)/2+','+cy+' '+x2+','+y2,
+      stroke:'#cf222e', 'stroke-width':2.2, fill:'none', 'stroke-dasharray':'6,3'
+    }));
+    svgTxt(svg, '⚡ Deoptimize', (x1+x2)/2, cy + 14, { size:10, weight:'700', fill:'#cf222e' });
+    arrow(svg, x2+2, y2+2, x2+2, y2+8, '#cf222e', null);
+  }
+
+  // ── Execution bars ─────────────────────────────────────
+  execBars.forEach(function(bar, bi) {
+    const barY = EXEC_Y + bi * 60;
+    const BAR_COLORS = {
+      interpret: { fill:'rgba(9,105,218,0.08)',   stroke:'#0969da',  text:'#0550ae' },
+      warm:      { fill:'rgba(154,103,0,0.10)',   stroke:'#9a6700',  text:'#7d5700' },
+      optimized: { fill:'rgba(130,80,223,0.12)',  stroke:'#8250df',  text:'#6e43be' },
+      deopt:     { fill:'rgba(207,34,46,0.10)',   stroke:'#cf222e',  text:'#cf222e' },
+    };
+    const bc = BAR_COLORS[bar.state] || BAR_COLORS.interpret;
+    svg.appendChild(svgEl('rect', {
+      x:bar.x, y:barY, width:bar.w, height:48, rx:6,
+      fill: bar.highlight ? bc.fill.replace('0.08','0.18').replace('0.10','0.2').replace('0.12','0.22').replace('0.10','0.2') : bc.fill,
+      stroke:bc.stroke, 'stroke-width': bar.highlight ? 2.2 : 1.5
+    }));
+    svgTxt(svg, bar.label, bar.x + bar.w/2, barY + 19, { size:11, weight:'700', fill:bc.text });
+    if (bar.sub) {
+      svgTxt(svg, bar.sub, bar.x + bar.w/2, barY + 35, { size:9.5, fill:bc.text, mono:true });
+    }
+  });
+
+  // ── Metrics panel ──────────────────────────────────────
+  if (metrics.length > 0) {
+    const mx = 8, my = 330, mw = 684, mh = 62;
+    svg.appendChild(svgEl('rect', { x:mx, y:my, width:mw, height:mh, rx:6,
+      fill:'rgba(130,80,223,0.04)', stroke:'rgba(130,80,223,0.2)', 'stroke-width':1.5 }));
+    svgTxt(svg, 'ランタイム情報', mx+8, my+15, { size:9.5, weight:'700', fill:'#8250df', anchor:'start' });
+    const colW = mw / metrics.length;
+    metrics.forEach(function(m, mi) {
+      const mx2 = mx + mi * colW + colW/2;
+      svgTxt(svg, m.label, mx2, my + 33, { size:9, fill:'#636c76' });
+      svgTxt(svg, m.value, mx2, my + 52, { size:13, weight:'700', fill: m.color || '#8250df' });
+    });
+  }
+}
+
+// ============================================================
+// Scenarios
+// ============================================================
+const SCENARIOS = [
+
+  // ── Scenario 1: JIT コンパイルの基本フロー ───────────────
+  {
+    name: '① JIT 基本フロー',
+    description: 'JavaScript のコードがどのように <strong>インタープリタ → プロファイリング → ネイティブコード</strong> へと変化するかを追います。V8 エンジン（<code>Ignition</code> + <code>TurboFan</code>）を例に説明します。',
+    steps: [
+      {
+        activeStage: 'source',
+        stageLabels: { source: ['function add(a,b)', '{ return a + b }'] },
+        flowArrows: [],
+        execBars: [],
+        metrics: [],
+        explain: '<span class="hl-blue">ソースコード。</span>JavaScript ファイルが読み込まれます。<br><code>function add(a, b) { return a + b }</code><br>エンジンはまずこのコードを<strong>パース</strong>して AST（抽象構文木）を生成します。'
+      },
+      {
+        activeStage: 'bytecode',
+        stageLabels: {
+          source:   ['function add(a,b)', '{ return a + b }'],
+          bytecode: ['LdaNamedProperty', 'Add r0, r1', 'Return'],
+        },
+        flowArrows: [{ from:'source', to:'bytecode', color:'#0969da', label:'Parser → AST' }],
+        execBars: [],
+        metrics: [],
+        explain: '<span class="hl-blue">Bytecode 生成。</span><br>AST から <strong>Ignition インタープリタ用 Bytecode</strong> が生成されます。<br>Bytecode はプラットフォーム非依存で、直接解釈実行できます。<br>起動が速い（コンパイル待ちなし）が実行は遅い。'
+      },
+      {
+        activeStage: 'ignition',
+        stageLabels: {
+          bytecode: ['LdaNamedProperty', 'Add r0, r1', 'Return'],
+          ignition: ['実行 #1: number', '実行 #2: number', '実行 #100: number'],
+        },
+        flowArrows: [
+          { from:'source', to:'bytecode', color:'#0969da' },
+          { from:'bytecode', to:'ignition', color:'#1a7f37', label:'interpret' },
+        ],
+        execBars: [
+          { x:20, w:200, state:'interpret', label:'add(1, 2) 実行 ×100', sub:'Ignition が解釈実行' },
+        ],
+        metrics: [
+          { label:'実行回数', value:'100×', color:'#0969da' },
+          { label:'実行モード', value:'interpret', color:'#636c76' },
+          { label:'型情報', value:'number', color:'#1a7f37' },
+          { label:'速度', value:'遅い', color:'#9a6700' },
+        ],
+        explain: '<span class="hl-green">Ignition がインタープリタとして Bytecode を実行。</span><br>同時に <strong>型フィードバック（type feedback）</strong> を収集します。<br>例: <code>add(1, 2)</code> の引数は常に <code>number</code> 型。<br>一定の呼び出し回数に達すると「ホット（Hot）」とマークされます。'
+      },
+      {
+        activeStage: 'turbofan',
+        stageLabels: {
+          bytecode: ['LdaNamedProperty', 'Add r0, r1', 'Return'],
+          ignition: ['Hot! 回数閾値到達', '型: number, number'],
+          turbofan: ['Speculative opt.', 'Inlining...', 'Register alloc'],
+        },
+        flowArrows: [
+          { from:'source', to:'bytecode', color:'#0969da' },
+          { from:'bytecode', to:'ignition', color:'#1a7f37' },
+          { from:'ignition', to:'turbofan', color:'#8250df', label:'Hot!' },
+        ],
+        execBars: [
+          { x:20, w:200, state:'warm', label:'add 呼び出し多数', sub:'型フィードバック収集済' },
+          { x:240, w:180, state:'optimized', label:'TurboFan コンパイル中', sub:'型情報を前提に最適化', highlight:true },
+        ],
+        metrics: [
+          { label:'実行回数', value:'1000×', color:'#8250df' },
+          { label:'実行モード', value:'JIT コンパイル中', color:'#8250df' },
+          { label:'型仮定', value:'number + number', color:'#1a7f37' },
+          { label:'最適化', value:'Speculative', color:'#8250df' },
+        ],
+        explain: '<span class="hl-purple">TurboFan が JIT コンパイルを開始！</span><br>「引数は常に number 型」という<strong>投機的最適化（Speculative Optimization）</strong>を行います。<br>ネイティブコードに変換し整数加算命令を直接生成します。<br>型チェック省略・関数インライン化・レジスタ割り当てなどの最適化を実施。'
+      },
+      {
+        activeStage: 'native',
+        stageLabels: {
+          ignition: ['型: number, number'],
+          turbofan: ['コンパイル済み'],
+          native:   ['MOV rax, rdi', 'ADD rax, rsi', 'RET'],
+        },
+        flowArrows: [
+          { from:'source', to:'bytecode', color:'#0969da' },
+          { from:'bytecode', to:'ignition', color:'#1a7f37' },
+          { from:'ignition', to:'turbofan', color:'#8250df' },
+          { from:'turbofan', to:'native', color:'#1a7f37', label:'emit' },
+        ],
+        execBars: [
+          { x:20, w:200, state:'interpret', label:'add(1, 2) 初回 100 回', sub:'Ignition' },
+          { x:240, w:420, state:'optimized', label:'add(1, 2) ×10000 高速実行', sub:'Native Code — CPU 命令を直接実行', highlight:true },
+        ],
+        metrics: [
+          { label:'実行回数', value:'10000×', color:'#1a7f37' },
+          { label:'実行モード', value:'Native Code', color:'#1a7f37' },
+          { label:'速度向上', value:'~10–100×', color:'#1a7f37' },
+          { label:'型仮定', value:'維持中', color:'#8250df' },
+        ],
+        explain: '<span class="hl-green">ネイティブコードが生成され、高速実行！</span><br>CPU の命令を直接実行するため、インタープリタに比べ <strong>10〜100 倍</strong>の速度向上が期待できます。<br>最適化されたコードは <strong>Code Cache</strong> に保存され、次回の呼び出しでも再利用されます。'
+      },
+    ]
+  },
+
+  // ── Scenario 2: Deoptimization ───────────────────────────
+  {
+    name: '② Deoptimization',
+    description: '型の仮定が崩れると、JIT コンパイルした最適化コードを<strong>破棄（Deoptimize）</strong>してインタープリタに戻ります。これが JIT の弱点です。',
+    steps: [
+      {
+        activeStage: 'native',
+        stageLabels: {
+          turbofan: ['最適化済み'],
+          native:   ['number + number', '仮定: 型は固定'],
+        },
+        flowArrows: [
+          { from:'source', to:'bytecode', color:'#0969da' },
+          { from:'bytecode', to:'ignition', color:'#1a7f37' },
+          { from:'ignition', to:'turbofan', color:'#8250df' },
+          { from:'turbofan', to:'native', color:'#1a7f37' },
+        ],
+        execBars: [
+          { x:20, w:640, state:'optimized', label:'add(1, 2) — 最適化コード実行中', sub:'type guard: a, b は number と仮定', highlight:true },
+        ],
+        metrics: [
+          { label:'状態', value:'Optimized', color:'#1a7f37' },
+          { label:'型仮定', value:'number + number', color:'#8250df' },
+          { label:'速度', value:'高速', color:'#1a7f37' },
+        ],
+        explain: '<code>add</code> は最適化済みネイティブコードで実行中です。<br>TurboFan は「引数は常に number」と仮定してコードを生成しています。<br>実際のコードには<strong>型ガード（type guard）</strong>が含まれており、仮定が崩れると検出します。'
+      },
+      {
+        activeStage: 'native',
+        stageLabels: {
+          turbofan: ['型ガード検出！'],
+          native:   ['add("hi", 2) 呼び出し', '⚠ string を検出'],
+        },
+        flowArrows: [
+          { from:'source', to:'bytecode', color:'#0969da' },
+          { from:'bytecode', to:'ignition', color:'#1a7f37' },
+          { from:'ignition', to:'turbofan', color:'#8250df' },
+          { from:'turbofan', to:'native', color:'#1a7f37' },
+        ],
+        execBars: [
+          { x:20, w:640, state:'deopt', label:'add("hi", 2) — 型の仮定が崩れた！', sub:'string + number → type guard 失敗', highlight:true },
+        ],
+        metrics: [
+          { label:'状態', value:'Type Guard 失敗', color:'#cf222e' },
+          { label:'実際の型', value:'string + number', color:'#cf222e' },
+          { label:'アクション', value:'Deoptimize', color:'#cf222e' },
+        ],
+        deopt: false,
+        explain: '<span class="hl-red">型ガード失敗！</span><br><code>add("hi", 2)</code> が呼ばれ、第一引数が <code>string</code> でした。<br>TurboFan が生成したコードは <code>number + number</code> を仮定しているため、このパスは処理できません。<br>→ <strong>Deoptimization</strong> が発動します。'
+      },
+      {
+        activeStage: 'ignition',
+        stageLabels: {
+          ignition: ['再インタープリタ実行', '型情報をリセット'],
+          turbofan: ['最適化コードを破棄'],
+        },
+        flowArrows: [
+          { from:'source', to:'bytecode', color:'#0969da' },
+          { from:'bytecode', to:'ignition', color:'#1a7f37' },
+        ],
+        execBars: [
+          { x:20, w:300, state:'deopt', label:'Deoptimized', sub:'最適化コードを破棄' },
+          { x:340, w:340, state:'interpret', label:'Ignition で再実行', sub:'型情報を再収集中', highlight:true },
+        ],
+        metrics: [
+          { label:'状態', value:'Deoptimized', color:'#cf222e' },
+          { label:'実行モード', value:'interpret', color:'#636c76' },
+          { label:'速度', value:'低下（再コンパイル待ち）', color:'#9a6700' },
+        ],
+        deopt: true,
+        explain: '<span class="hl-orange">Deoptimize — 最適化コードを破棄して Ignition に戻ります。</span><br>現在の実行状態（スタック・レジスタ）を Bytecode 解釈用の形式に変換します（<strong>On-Stack Replacement / OSR</strong>）。<br>型フィードバックをリセットし、<strong>新しい型パターンでの再プロファイリング</strong>が始まります。'
+      },
+      {
+        activeStage: 'turbofan',
+        stageLabels: {
+          ignition: ['新: string|number', '再プロファイル完了'],
+          turbofan: ['string|number 対応', '再最適化中...'],
+        },
+        flowArrows: [
+          { from:'source', to:'bytecode', color:'#0969da' },
+          { from:'bytecode', to:'ignition', color:'#1a7f37' },
+          { from:'ignition', to:'turbofan', color:'#8250df', label:'再コンパイル' },
+        ],
+        execBars: [
+          { x:20, w:200, state:'warm', label:'再プロファイリング', sub:'string|number の型情報を収集' },
+          { x:240, w:200, state:'optimized', label:'再最適化コンパイル', sub:'より汎用的な最適化', highlight:true },
+        ],
+        metrics: [
+          { label:'状態', value:'再コンパイル', color:'#8250df' },
+          { label:'型仮定', value:'string|number', color:'#8250df' },
+          { label:'教訓', value:'型を安定させよ', color:'#cf222e' },
+        ],
+        explain: '<span class="hl-purple">型情報が更新されて再コンパイル。</span><br>今度は <code>string | number</code> を含む、より汎用的なコードが生成されます。<br><br><strong>パフォーマンスのベストプラクティス：</strong><br>• 関数に渡す引数の型を統一する<br>• オブジェクトのプロパティ構造（Shape）を一定に保つ<br>→ Deopt を減らすことが JS 高速化の鍵です。'
+      },
+    ]
+  },
+
+  // ── Scenario 3: インライン化とループ最適化 ───────────────
+  {
+    name: '③ 最適化テクニック',
+    description: 'JIT が実施する代表的な最適化: <strong>関数インライン化（Inlining）</strong>と <strong>ループ最適化（LICM / OSR）</strong>を示します。',
+    steps: [
+      {
+        activeStage: 'ignition',
+        stageLabels: {
+          source: ['function square(x)', '{ return x * x }', 'for i in range(n)'],
+          ignition: ['square は頻繁に呼び出される', '→ インライン化候補'],
+        },
+        flowArrows: [
+          { from:'source', to:'bytecode', color:'#0969da' },
+          { from:'bytecode', to:'ignition', color:'#1a7f37' },
+        ],
+        execBars: [
+          { x:20, w:200, state:'warm', label:'square(i) × 10000 回', sub:'関数呼び出しオーバーヘッドあり' },
+        ],
+        metrics: [
+          { label:'最適化', value:'インライン化候補', color:'#8250df' },
+          { label:'呼び出し回数', value:'10000×', color:'#9a6700' },
+          { label:'オーバーヘッド', value:'関数呼び出しコスト', color:'#636c76' },
+        ],
+        explain: '<span class="hl-orange">プロファイリングにより <code>square</code> がホットと判定。</span><br>小さな関数を何度も呼ぶ場合、関数呼び出しのオーバーヘッド（スタックフレーム生成、引数セット）がコストになります。<br>TurboFan は<strong>インライン化（Inlining）</strong>で対処します。'
+      },
+      {
+        activeStage: 'turbofan',
+        stageLabels: {
+          turbofan: ['Inlining: square(i)', '→ i * i に展開', 'Loop unrolling'],
+          native: ['ADD/MUL 命令列', '関数呼び出しなし'],
+        },
+        flowArrows: [
+          { from:'source', to:'bytecode', color:'#0969da' },
+          { from:'bytecode', to:'ignition', color:'#1a7f37' },
+          { from:'ignition', to:'turbofan', color:'#8250df', label:'Inlining' },
+          { from:'turbofan', to:'native', color:'#1a7f37' },
+        ],
+        execBars: [
+          { x:20, w:100, state:'warm', label:'呼び出し前', sub:'square(i)' },
+          { x:140, w:540, state:'optimized', label:'インライン化後: i * i', sub:'関数呼び出しコストがゼロに', highlight:true },
+        ],
+        metrics: [
+          { label:'最適化', value:'Inlining', color:'#8250df' },
+          { label:'コード膨張', value:'+バイト数', color:'#9a6700' },
+          { label:'速度', value:'関数コスト 0', color:'#1a7f37' },
+        ],
+        explain: '<span class="hl-purple">インライン化（Function Inlining）。</span><br><code>square(i)</code> の呼び出しを <code>i * i</code> に<strong>展開</strong>します。<br>関数呼び出しのスタック操作・引数設定・リターンが不要になります。<br>トレードオフ: コードサイズが増加（Code Bloat）。<br>さらにインライン後に <strong>ループアンローリング</strong> や LICM（Loop Invariant Code Motion）も適用できます。'
+      },
+      {
+        activeStage: 'turbofan',
+        stageLabels: {
+          turbofan: ['LICM: ループ不変式', '→ ループ外に移動', 'OSR: ループ中途最適化'],
+          native: ['ループ不変計算 1 回', 'ループ本体を高速化'],
+        },
+        flowArrows: [
+          { from:'source', to:'bytecode', color:'#0969da' },
+          { from:'bytecode', to:'ignition', color:'#1a7f37' },
+          { from:'ignition', to:'turbofan', color:'#8250df' },
+          { from:'turbofan', to:'native', color:'#1a7f37' },
+        ],
+        execBars: [
+          { x:20, w:200, state:'interpret', label:'for i: 0→1000 (解釈実行)', sub:'ループ中に Hot 判定' },
+          { x:240, w:440, state:'optimized', label:'OSR: ループ途中から最適化コードへ切り替え', sub:'LICM + Unrolling 適用', highlight:true },
+        ],
+        metrics: [
+          { label:'LICM', value:'不変コード移動', color:'#8250df' },
+          { label:'OSR', value:'On-Stack Replacement', color:'#1a7f37' },
+          { label:'効果', value:'ループ全体を高速化', color:'#1a7f37' },
+        ],
+        explain: '<span class="hl-purple">LICM（Loop Invariant Code Motion）と OSR。</span><br><strong>LICM</strong>: ループ内で毎回計算されるが結果が変わらない式をループ外に移動します。<br><code>for (i) { x = Math.PI * 2; sum += x * i; }</code><br>→ <code>Math.PI * 2</code> はループ外へ。<br><strong>OSR（On-Stack Replacement）</strong>: ループ実行の<strong>途中</strong>で最適化コードに切り替えます。長いループでも恩恵を受けられます。'
+      },
+    ]
+  },
+];
+
+// ============================================================
+// State & Controls
+// ============================================================
+let currentScenario = 0, currentStep = 0, autoTimer = null;
+function renderStep() {
+  const sc = SCENARIOS[currentScenario], step = sc.steps[currentStep];
+  renderSnapshot(step);
+  const el = document.getElementById('stepExplain');
+  el.style.opacity = 0;
+  setTimeout(function(){ el.innerHTML = step.explain||''; el.style.opacity=1; }, 100);
+  document.getElementById('btnPrev').disabled = currentStep===0;
+  document.getElementById('btnNext').disabled = currentStep>=sc.steps.length-1;
+  updateStepCounter();
+}
+function nextStep(){ if(currentStep<SCENARIOS[currentScenario].steps.length-1){ currentStep++; renderStep(); } }
+function prevStep(){ if(currentStep>0){ currentStep--; renderStep(); } }
+function resetScenario(){
+  if(autoTimer){ clearInterval(autoTimer); autoTimer=null; }
+  currentStep=0; document.getElementById('btnAuto').textContent='▶ 自動再生'; renderStep();
+}
+function toggleAuto(){
+  if(autoTimer){ clearInterval(autoTimer); autoTimer=null; document.getElementById('btnAuto').textContent='▶ 自動再生'; }
+  else {
+    document.getElementById('btnAuto').textContent='⏸ 停止';
+    autoTimer=setInterval(function(){
+      if(currentStep>=SCENARIOS[currentScenario].steps.length-1){
+        clearInterval(autoTimer); autoTimer=null; document.getElementById('btnAuto').textContent='▶ 自動再生'; return;
+      }
+      nextStep();
+    }, 1800);
+  }
+}
+function selectScenario(idx){
+  if(autoTimer){ clearInterval(autoTimer); autoTimer=null; }
+  currentScenario=idx; currentStep=0; document.getElementById('btnAuto').textContent='▶ 自動再生';
+  document.querySelectorAll('.tab-btn').forEach(function(b,i){ b.classList.toggle('active',i===idx); });
+  document.getElementById('scenarioDesc').innerHTML=SCENARIOS[idx].description;
+  renderStep();
+}
+function updateStepCounter(){
+  const sc=SCENARIOS[currentScenario];
+  document.getElementById('stepCounter').textContent='ステップ: '+(currentStep+1)+' / '+sc.steps.length;
+  const dots=document.getElementById('stepDots'); dots.innerHTML='';
+  sc.steps.forEach(function(_,i){
+    const d=document.createElement('div');
+    d.className='step-dot'+(i<currentStep?' done':i===currentStep?' current':'');
+    dots.appendChild(d);
+  });
+}
+(function init(){
+  const tabBar=document.getElementById('tabBar');
+  SCENARIOS.forEach(function(sc,i){
+    const btn=document.createElement('button');
+    btn.className='tab-btn'+(i===0?' active':'');
+    btn.textContent=sc.name;
+    btn.onclick=function(){ selectScenario(i); };
+    tabBar.appendChild(btn);
+  });
+  document.getElementById('scenarioDesc').innerHTML=SCENARIOS[0].description;
+  renderStep();
+})();
+</script>
+</body>
+</html>

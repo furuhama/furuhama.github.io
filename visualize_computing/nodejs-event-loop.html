@@ -1,0 +1,1438 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Node.js イベントループ 可視化</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #ffffff;
+      --surface: #f6f8fa;
+      --surface2: #eaeef2;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --text-muted: #636c76;
+      --green: #1a7f37;
+      --blue: #0969da;
+      --purple: #8250df;
+      --orange: #bc4c00;
+      --red: #cf222e;
+      --yellow: #9a6700;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .back-link {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: color 0.15s;
+    }
+
+    .back-link:hover { color: var(--text); }
+
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface);
+    }
+
+    header h1 {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .badge {
+      background: rgba(26, 127, 55, 0.1);
+      color: var(--green);
+      border: 1px solid rgba(26, 127, 55, 0.3);
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      grid-template-rows: 1fr auto;
+      flex: 1;
+      gap: 0;
+    }
+
+    /* ===== Left Panel: Code ===== */
+    .code-panel {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel-header {
+      padding: 10px 14px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .scenario-tabs {
+      display: flex;
+      gap: 0;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .scenario-tab {
+      padding: 4px 10px;
+      font-size: 0.75rem;
+      border-radius: 6px;
+      cursor: pointer;
+      background: var(--bg);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      transition: all 0.15s;
+    }
+
+    .scenario-tab.active {
+      background: var(--blue);
+      color: #fff;
+      border-color: var(--blue);
+      font-weight: 700;
+    }
+
+    .code-area {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+      background: var(--bg);
+    }
+
+    .code-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'Fira Code', 'Consolas', monospace;
+      font-size: 0.82rem;
+      line-height: 1.7;
+      transition: background 0.2s;
+      cursor: default;
+    }
+
+    .code-line.executing {
+      background: rgba(9, 105, 218, 0.07);
+      border-left: 2px solid var(--blue);
+    }
+
+    .code-line.executed {
+      opacity: 0.35;
+    }
+
+    .line-num {
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      width: 18px;
+      text-align: right;
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .line-code { white-space: pre; }
+
+    /* syntax highlight */
+    .kw { color: var(--purple); }
+    .fn { color: var(--blue); }
+    .str { color: var(--orange); }
+    .num { color: var(--green); }
+    .cmt { color: var(--text-muted); font-style: italic; }
+    .punc { color: var(--text); }
+
+    .output-area {
+      border-top: 1px solid var(--border);
+      padding: 10px 14px;
+      background: var(--surface);
+    }
+
+    .output-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .output-log {
+      font-family: 'Fira Code', monospace;
+      font-size: 0.8rem;
+      min-height: 60px;
+      max-height: 100px;
+      overflow-y: auto;
+    }
+
+    .log-entry {
+      color: var(--green);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 1px 0;
+      opacity: 0;
+      transform: translateX(-6px);
+      animation: slideIn 0.3s ease forwards;
+    }
+
+    .log-entry::before { content: '>'; color: var(--text-muted); }
+
+    @keyframes slideIn {
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    /* ===== Right Panel: Visualization ===== */
+    .viz-panel {
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 16px;
+      background: var(--bg);
+    }
+
+    .viz-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-rows: auto auto;
+      gap: 14px;
+      flex: 1;
+    }
+
+    .box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      position: relative;
+      min-height: 140px;
+    }
+
+    .box-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .box-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .box-subtitle {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      margin-top: -4px;
+    }
+
+    .stack-items {
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 4px;
+      flex: 1;
+      justify-content: flex-end;
+    }
+
+    .queue-items {
+      display: flex;
+      flex-direction: row;
+      gap: 4px;
+      flex: 1;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .webapi-items {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+
+    .frame {
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-family: 'Fira Code', monospace;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      transition: all 0.3s ease;
+      animation: frameIn 0.25s ease;
+      position: relative;
+    }
+
+    @keyframes frameIn {
+      from { opacity: 0; transform: scale(0.85) translateY(6px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    @keyframes frameOut {
+      from { opacity: 1; transform: scale(1); }
+      to { opacity: 0; transform: scale(0.85) translateY(6px); }
+    }
+
+    .frame.removing {
+      animation: frameOut 0.2s ease forwards;
+    }
+
+    .frame.callstack {
+      background: rgba(9, 105, 218, 0.08);
+      border: 1px solid rgba(9, 105, 218, 0.28);
+      color: #0550ae;
+    }
+
+    .frame.webapi {
+      background: rgba(9, 105, 218, 0.05);
+      border: 1px solid rgba(9, 105, 218, 0.2);
+      color: var(--blue);
+    }
+
+    .frame.microtask {
+      background: rgba(130, 80, 223, 0.08);
+      border: 1px solid rgba(130, 80, 223, 0.28);
+      color: #6639ba;
+    }
+
+    .frame.macrotask {
+      background: rgba(188, 76, 0, 0.08);
+      border: 1px solid rgba(188, 76, 0, 0.28);
+      color: #953800;
+    }
+
+    .frame.highlight {
+      animation: pulse 0.5s ease;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+
+    .progress-bar {
+      height: 3px;
+      background: rgba(0, 0, 0, 0.08);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 2px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--blue);
+      transition: width linear;
+      border-radius: 2px;
+    }
+
+    /* Call Stack box */
+    .box.callstack-box { border-color: rgba(9, 105, 218, 0.3); }
+    .box.callstack-box .box-dot { background: #0969da; }
+    .box.callstack-box .box-title { color: #0550ae; }
+
+    /* Web APIs box */
+    .box.webapi-box { border-color: rgba(9, 105, 218, 0.2); }
+    .box.webapi-box .box-dot { background: var(--blue); }
+    .box.webapi-box .box-title { color: var(--blue); }
+
+    /* Microtask Queue box */
+    .box.microtask-box { border-color: rgba(130, 80, 223, 0.3); }
+    .box.microtask-box .box-dot { background: #8250df; }
+    .box.microtask-box .box-title { color: #6639ba; }
+
+    /* Macrotask Queue box */
+    .box.macrotask-box { border-color: rgba(188, 76, 0, 0.3); }
+    .box.macrotask-box .box-dot { background: #bc4c00; }
+    .box.macrotask-box .box-title { color: #953800; }
+
+    /* Event Loop */
+    .box.eventloop-box {
+      border-color: rgba(26, 127, 55, 0.3);
+      grid-column: 3;
+      grid-row: 1 / 3;
+      min-height: unset;
+      align-items: center;
+      justify-content: flex-start;
+    }
+
+    .box.eventloop-box .box-dot { background: var(--green); }
+    .box.eventloop-box .box-title { color: var(--green); }
+
+    .event-loop-visual {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+      width: 100%;
+    }
+
+    .loop-circle {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      border: 3px solid rgba(26, 127, 55, 0.2);
+      border-top-color: var(--green);
+      position: relative;
+      transition: animation 0.3s;
+    }
+
+    .loop-circle.spinning {
+      animation: spin 1.2s linear infinite;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .loop-center {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 0.65rem;
+      font-weight: 700;
+      color: var(--green);
+      text-align: center;
+      line-height: 1.3;
+    }
+
+    .loop-status {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    .loop-status.active { color: var(--green); }
+
+    .loop-steps {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-top: 4px;
+    }
+
+    .loop-step {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      font-size: 0.7rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      transition: all 0.25s;
+    }
+
+    .loop-step.active {
+      background: rgba(26, 127, 55, 0.07);
+      border-color: rgba(26, 127, 55, 0.35);
+      color: var(--green);
+    }
+
+    .loop-step .step-num {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--surface2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .loop-step.active .step-num {
+      background: var(--green);
+      color: #fff;
+    }
+
+    /* ===== Controls ===== */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      grid-column: 1 / -1;
+    }
+
+    .btn {
+      padding: 7px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 500;
+    }
+
+    .btn:hover { background: var(--surface2); }
+
+    .btn.primary {
+      background: var(--blue);
+      color: #fff;
+      border-color: var(--blue);
+      font-weight: 700;
+    }
+
+    .btn.primary:hover { background: #0550ae; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .speed-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .speed-control input {
+      width: 100px;
+      accent-color: var(--blue);
+    }
+
+    /* ===== Explanation ===== */
+    .explanation {
+      padding: 10px 16px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      grid-column: 1 / -1;
+    }
+
+    .explanation-text {
+      font-size: 0.82rem;
+      color: var(--text);
+      min-height: 24px;
+      transition: all 0.3s;
+    }
+
+    .explanation-text .highlight-green { color: var(--green); font-weight: 700; }
+    .explanation-text .highlight-blue { color: var(--blue); font-weight: 700; }
+    .explanation-text .highlight-purple { color: #6639ba; font-weight: 700; }
+    .explanation-text .highlight-orange { color: #953800; font-weight: 700; }
+
+    /* Heap box */
+    .box.heap-box {
+      border-color: rgba(154, 103, 0, 0.25);
+      min-height: 80px;
+    }
+
+    .box.heap-box .box-dot { background: var(--yellow); }
+    .box.heap-box .box-title { color: var(--yellow); }
+
+    .heap-visual {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .heap-blob {
+      width: 60px;
+      height: 40px;
+      background: rgba(154, 103, 0, 0.07);
+      border: 1px dashed rgba(154, 103, 0, 0.25);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      color: var(--yellow);
+    }
+
+    /* Flying frames */
+    .flying-frame {
+      position: fixed;
+      pointer-events: none;
+      z-index: 999;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-family: 'Fira Code', monospace;
+      font-weight: 500;
+      transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+      opacity: 0;
+    }
+
+    .empty-hint {
+      font-size: 0.7rem;
+      color: rgba(0,0,0,0.18);
+      text-align: center;
+      padding: 8px;
+      font-style: italic;
+    }
+
+    /* step indicator */
+    .step-indicator {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .step-dots {
+      display: flex;
+      gap: 3px;
+    }
+
+    .step-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--border);
+      transition: background 0.2s;
+    }
+
+    .step-dot.done { background: var(--green); }
+    .step-dot.current { background: var(--blue); }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+    <circle cx="12" cy="12" r="10" stroke="#1a7f37" stroke-width="2"/>
+    <path d="M8 14l4-4 4 4" stroke="#1a7f37" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="12" cy="12" r="3" fill="#1a7f37" opacity="0.25"/>
+  </svg>
+  <h1>Node.js イベントループ 可視化</h1>
+  <span class="badge">Interactive</span>
+  <a class="back-link" href="index.html">
+    <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/></svg>
+    一覧へ戻る
+  </a>
+</header>
+
+<div class="main">
+  <!-- Left: Code Panel -->
+  <div class="code-panel">
+    <div class="panel-header">
+      <span>シナリオ</span>
+    </div>
+    <div class="scenario-tabs" id="scenarioTabs"></div>
+    <div class="code-area" id="codeArea"></div>
+    <div class="output-area">
+      <div class="output-label">Console Output</div>
+      <div class="output-log" id="outputLog"></div>
+    </div>
+  </div>
+
+  <!-- Right: Visualization -->
+  <div class="viz-panel">
+    <div class="viz-grid">
+
+      <!-- Call Stack -->
+      <div class="box callstack-box">
+        <div class="box-title">
+          <span class="box-dot"></span>
+          Call Stack
+        </div>
+        <div class="box-subtitle">LIFO • 実行中の関数</div>
+        <div class="stack-items" id="callStackItems">
+          <div class="empty-hint">空</div>
+        </div>
+      </div>
+
+      <!-- Web APIs / Thread Pool -->
+      <div class="box webapi-box">
+        <div class="box-title">
+          <span class="box-dot"></span>
+          Web APIs / Thread Pool
+        </div>
+        <div class="box-subtitle">libuv • 非同期処理</div>
+        <div class="webapi-items" id="webapiItems">
+          <div class="empty-hint">空</div>
+        </div>
+      </div>
+
+      <!-- Event Loop -->
+      <div class="box eventloop-box">
+        <div class="box-title">
+          <span class="box-dot"></span>
+          Event Loop
+        </div>
+        <div class="event-loop-visual">
+          <div class="loop-circle" id="loopCircle">
+            <div class="loop-center">Event<br>Loop</div>
+          </div>
+          <div class="loop-status" id="loopStatus">待機中...</div>
+          <div class="loop-steps">
+            <div class="loop-step" id="step-execute">
+              <span class="step-num">1</span>
+              Call Stack 実行
+            </div>
+            <div class="loop-step" id="step-microtask">
+              <span class="step-num">2</span>
+              Microtask 処理 <span style="font-size:0.6rem;opacity:0.7">(nextTick→Promise)</span>
+            </div>
+            <div class="loop-step" id="step-macrotask">
+              <span class="step-num">3</span>
+              Macrotask 処理
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Microtask Queue -->
+      <div class="box microtask-box">
+        <div class="box-title">
+          <span class="box-dot"></span>
+          Microtask Queue
+        </div>
+        <div class="box-subtitle">Promise.then / queueMicrotask<br><span style="color:var(--red);font-size:0.6rem;">※ Node.js では process.nextTick がより優先</span></div>
+        <div class="queue-items" id="microtaskItems">
+          <div class="empty-hint">空</div>
+        </div>
+      </div>
+
+      <!-- Macrotask Queue -->
+      <div class="box macrotask-box">
+        <div class="box-title">
+          <span class="box-dot"></span>
+          Macrotask Queue
+        </div>
+        <div class="box-subtitle">setTimeout / setInterval / I/O</div>
+        <div class="queue-items" id="macrotaskItems">
+          <div class="empty-hint">空</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Explanation -->
+    <div class="explanation">
+      <div class="explanation-text" id="explanationText">シナリオを選択してから「実行」ボタンを押してください。</div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button class="btn primary" id="btnPlay" onclick="playStep()">
+      <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M11.596 8.697l-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393z"/></svg>
+      次のステップ
+    </button>
+    <button class="btn" id="btnAuto" onclick="toggleAuto()">
+      <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg>
+      自動再生
+    </button>
+    <button class="btn" onclick="resetScenario()">
+      <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3a5 5 0 1 1-4.546 2.914.5.5 0 0 0-.908-.417A6 6 0 1 0 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 0-.41-.192L5.23 2.308a.25.25 0 0 0 0 .384l2.36 1.966A.25.25 0 0 0 8 4.466z"/></svg>
+      リセット
+    </button>
+    <div class="step-indicator">
+      <span id="stepLabel">ステップ: 0 / 0</span>
+      <div class="step-dots" id="stepDots"></div>
+    </div>
+    <div class="speed-control">
+      <span>速度:</span>
+      <input type="range" id="speedSlider" min="200" max="2000" value="800" step="100">
+      <span id="speedLabel">0.8s</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// SCENARIOS
+// ============================================================
+const SCENARIOS = [
+  {
+    name: "① setTimeout",
+    description: "最も基本的な非同期パターン",
+    code: [
+      { text: "console.log('Start');", parts: [{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"Start"},{t:"punc",v:"');"}] },
+      { text: "", parts: [] },
+      { text: "setTimeout(() => {", parts: [{t:"fn",v:"setTimeout"},{t:"punc",v:"(() => {"}] },
+      { text: "  console.log('Timeout!');", parts: [{t:"punc",v:"  "},{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"Timeout!"},{t:"punc",v:"');"}] },
+      { text: "}, 0);", parts: [{t:"punc",v:"}, "},{t:"num",v:"0"},{t:"punc",v:");"}] },
+      { text: "", parts: [] },
+      { text: "console.log('End');", parts: [{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"End"},{t:"punc",v:"');"}] },
+    ],
+    steps: [
+      { action: "explain", text: "コードが上から順に実行されます。まず <span class='highlight-green'>同期処理</span> から始まります。" },
+      { action: "push_stack", item: "main()", type: "callstack", line: -1, explain: "<span class='highlight-blue'>main()</span> がコール スタックに積まれます。プログラムのエントリポイントです。" },
+      { action: "execute_line", lineIdx: 0, explain: "<code>console.log('Start')</code> をコール スタックに積んで実行します。" },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "Start", explain: "<span class='highlight-green'>「Start」</span>が出力されます。" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "execute_line", lineIdx: 2, explain: "<code>setTimeout()</code> を実行します。コールバックと遅延時間 <code>0ms</code> を渡します。" },
+      { action: "push_stack", item: "setTimeout()", type: "callstack" },
+      { action: "add_webapi", item: "Timer (0ms)", id: "timer1", explain: "Node.js の <span class='highlight-blue'>libuv</span> にタイマーが登録されます。Call Stack からは外れ、バックグラウンドで処理されます。" },
+      { action: "pop_stack", item: "setTimeout()" },
+      { action: "execute_line", lineIdx: 6, explain: "次の同期処理 <code>console.log('End')</code> を実行します。setTimeout のコールバックは <em>まだ</em> 実行されません。" },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "End", explain: "<span class='highlight-green'>「End」</span>が出力されます。" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "pop_stack", item: "main()" },
+      { action: "loop_step", step: "execute", explain: "Call Stack が<span class='highlight-green'>空</span>になりました。Event Loop は常に動作しており、次のキューを確認します。まず Microtask Queue を確認します。" },
+      { action: "loop_step", step: "microtask", explain: "Microtask Queue は<span class='highlight-green'>空</span>です。次に Macrotask Queue を確認します。" },
+      { action: "webapi_done", id: "timer1", explain: "<span class='highlight-orange'>Timer が完了</span>しました。コールバックが Macrotask Queue に追加されます。" },
+      { action: "add_macrotask", item: "cb: Timeout!", id: "mac1" },
+      { action: "loop_step", step: "macrotask", explain: "Macrotask Queue にコールバックがあります。<span class='highlight-orange'>Event Loop</span> がそれを Call Stack に移します。" },
+      { action: "pop_macrotask", id: "mac1" },
+      { action: "push_stack", item: "cb: Timeout!", type: "callstack" },
+      { action: "execute_line", lineIdx: 3 },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "Timeout!", explain: "<span class='highlight-green'>「Timeout!」</span>が出力されます。" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "pop_stack", item: "cb: Timeout!" },
+      { action: "done", explain: "実行完了。出力順: Start → End → Timeout! (0msのsetTimeoutでも同期処理より後)" },
+    ]
+  },
+  {
+    name: "② Promise.then",
+    description: "Microtask の優先度",
+    code: [
+      { text: "console.log('1');", parts: [{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"1"},{t:"punc",v:"');"}] },
+      { text: "", parts: [] },
+      { text: "Promise.resolve().then(() => {", parts: [{t:"kw",v:"Promise"},{t:"punc",v:".resolve()."},{t:"fn",v:"then"},{t:"punc",v:"(() => {"}] },
+      { text: "  console.log('3');", parts: [{t:"punc",v:"  "},{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"3"},{t:"punc",v:"');"}] },
+      { text: "});", parts: [{t:"punc",v:"});"}] },
+      { text: "", parts: [] },
+      { text: "console.log('4');", parts: [{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"4"},{t:"punc",v:"');"}] },
+    ],
+    steps: [
+      { action: "explain", text: "Promise の .then コールバックは <span class='highlight-purple'>Microtask Queue</span> に入ります。Macrotask より優先されます。" },
+      { action: "push_stack", item: "main()", type: "callstack", line: -1 },
+      { action: "execute_line", lineIdx: 0, explain: "<code>console.log('1')</code> を実行します。" },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "1" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "execute_line", lineIdx: 2, explain: "<code>Promise.resolve()</code> は<em>即座に</em>解決された Promise を返します。<code>.then()</code> のコールバックは <span class='highlight-purple'>Microtask Queue</span> に登録されます。" },
+      { action: "push_stack", item: "Promise.resolve()", type: "callstack" },
+      { action: "add_microtask", item: "cb: log('3')", id: "mic1", explain: ".then のコールバックが <span class='highlight-purple'>Microtask Queue</span> に積まれました。今すぐは実行されません。" },
+      { action: "pop_stack", item: "Promise.resolve()" },
+      { action: "execute_line", lineIdx: 6, explain: "同期処理の <code>console.log('4')</code> を実行します。Microtask は Call Stack が空になるまで待ちます。" },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "4" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "pop_stack", item: "main()" },
+      { action: "loop_step", step: "execute", explain: "Call Stack が<span class='highlight-green'>空</span>になりました。Event Loop が Microtask Queue を確認します。" },
+      { action: "loop_step", step: "microtask", explain: "<span class='highlight-purple'>Microtask Queue</span> にコールバックがあります！Macrotask より先に処理されます。" },
+      { action: "pop_microtask", id: "mic1" },
+      { action: "push_stack", item: "cb: log('3')", type: "callstack" },
+      { action: "execute_line", lineIdx: 3 },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "3", explain: "<span class='highlight-green'>「3」</span>が出力されます。出力順: 1 → 4 → 3" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "pop_stack", item: "cb: log('3')" },
+      { action: "done", explain: "実行完了。出力順: 1 → 4 → 3。Promise の .then は同期処理の後、setTimeout より前に実行されます。" },
+    ]
+  },
+  {
+    name: "③ 混合(重要!)",
+    description: "Micro vs Macrotask の順序",
+    code: [
+      { text: "console.log('1');", parts: [{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"1"},{t:"punc",v:"');"}] },
+      { text: "", parts: [] },
+      { text: "setTimeout(() => {", parts: [{t:"fn",v:"setTimeout"},{t:"punc",v:"(() => {"}] },
+      { text: "  console.log('2');", parts: [{t:"punc",v:"  "},{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"2"},{t:"punc",v:"');"}] },
+      { text: "}, 0);", parts: [{t:"punc",v:"}, "},{t:"num",v:"0"},{t:"punc",v:");"}] },
+      { text: "", parts: [] },
+      { text: "Promise.resolve().then(() => {", parts: [{t:"kw",v:"Promise"},{t:"punc",v:".resolve()."},{t:"fn",v:"then"},{t:"punc",v:"(() => {"}] },
+      { text: "  console.log('3');", parts: [{t:"punc",v:"  "},{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"3"},{t:"punc",v:"');"}] },
+      { text: "});", parts: [{t:"punc",v:"});"}] },
+      { text: "", parts: [] },
+      { text: "console.log('4');", parts: [{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"4"},{t:"punc",v:"');"}] },
+    ],
+    steps: [
+      { action: "explain", text: "setTimeout と Promise.then が混在する場合。<span class='highlight-purple'>Microtask</span> は <span class='highlight-orange'>Macrotask</span> より<strong>常に優先</strong>されます。" },
+      { action: "push_stack", item: "main()", type: "callstack", line: -1 },
+      { action: "execute_line", lineIdx: 0 },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "1" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "execute_line", lineIdx: 2, explain: "<code>setTimeout</code> のコールバックを <span class='highlight-blue'>Web APIs</span> に登録します。" },
+      { action: "push_stack", item: "setTimeout()", type: "callstack" },
+      { action: "add_webapi", item: "Timer (0ms)", id: "timer2", explain: "タイマーが libuv に登録されました。" },
+      { action: "pop_stack", item: "setTimeout()" },
+      { action: "execute_line", lineIdx: 6, explain: "<code>Promise.resolve().then()</code> のコールバックを <span class='highlight-purple'>Microtask Queue</span> に登録します。" },
+      { action: "push_stack", item: "Promise.resolve()", type: "callstack" },
+      { action: "add_microtask", item: "cb: log('3')", id: "mic2", explain: ".then コールバックが <span class='highlight-purple'>Microtask Queue</span> に積まれました。" },
+      { action: "pop_stack", item: "Promise.resolve()" },
+      { action: "execute_line", lineIdx: 10 },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "4", explain: "<span class='highlight-green'>「4」</span>が出力されます。" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "pop_stack", item: "main()" },
+      { action: "loop_step", step: "execute", explain: "Call Stack が空になりました。Event Loop が次のキューを確認します。" },
+      { action: "loop_step", step: "microtask", explain: "<span class='highlight-purple'>Microtask Queue</span> を確認！コールバックがあります。<strong>Macrotask より先に</strong>処理します。" },
+      { action: "pop_microtask", id: "mic2" },
+      { action: "push_stack", item: "cb: log('3')", type: "callstack" },
+      { action: "execute_line", lineIdx: 7 },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "3" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "pop_stack", item: "cb: log('3')" },
+      { action: "loop_step", step: "macrotask", explain: "Microtask Queue が空になりました。今度は <span class='highlight-orange'>Macrotask Queue</span> を処理します。" },
+      { action: "webapi_done", id: "timer2", explain: "<span class='highlight-orange'>Timer 完了</span>。コールバックが Macrotask Queue に移動します。" },
+      { action: "add_macrotask", item: "cb: log('2')", id: "mac2" },
+      { action: "pop_macrotask", id: "mac2" },
+      { action: "push_stack", item: "cb: log('2')", type: "callstack" },
+      { action: "execute_line", lineIdx: 3 },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "2" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "pop_stack", item: "cb: log('2')" },
+      { action: "done", explain: "実行完了。出力順: 1 → 4 → 3 → 2。<br>ポイント: <span class='highlight-purple'>Microtask</span> (3) は <span class='highlight-orange'>Macrotask</span> (2) より常に先に実行されます。" },
+    ]
+  },
+  {
+    name: "④ async/await",
+    description: "async/await の動作原理",
+    code: [
+      { text: "async function fetchData() {", parts: [{t:"kw",v:"async"},{t:"punc",v:" "},{t:"kw",v:"function"},{t:"punc",v:" "},{t:"fn",v:"fetchData"},{t:"punc",v:"() {"}] },
+      { text: "  console.log('Fetching...');", parts: [{t:"punc",v:"  "},{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"Fetching..."},{t:"punc",v:"');"}] },
+      { text: "  await Promise.resolve();", parts: [{t:"punc",v:"  "},{t:"kw",v:"await"},{t:"punc",v:" "},{t:"kw",v:"Promise"},{t:"punc",v:".resolve();"}] },
+      { text: "  console.log('Done!');", parts: [{t:"punc",v:"  "},{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"Done!"},{t:"punc",v:"');"}] },
+      { text: "}", parts: [{t:"punc",v:"}"}] },
+      { text: "", parts: [] },
+      { text: "console.log('Before');", parts: [{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"Before"},{t:"punc",v:"');"}] },
+      { text: "fetchData();", parts: [{t:"fn",v:"fetchData"},{t:"punc",v:"();"}] },
+      { text: "console.log('After');", parts: [{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"After"},{t:"punc",v:"');"}] },
+    ],
+    steps: [
+      { action: "explain", text: "<span class='highlight-purple'>async/await</span> は Promise のシンタックスシュガー。<code>await</code> の後は <span class='highlight-purple'>Microtask</span> として再開されます。" },
+      { action: "push_stack", item: "main()", type: "callstack", line: -1 },
+      { action: "execute_line", lineIdx: 6, explain: "<code>console.log('Before')</code> を実行します。" },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "Before" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "execute_line", lineIdx: 7, explain: "<code>fetchData()</code> を呼び出します。async 関数が実行開始します。" },
+      { action: "push_stack", item: "fetchData()", type: "callstack" },
+      { action: "execute_line", lineIdx: 1, explain: "async 関数内の <code>console.log('Fetching...')</code> を実行します。" },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "Fetching..." },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "execute_line", lineIdx: 2, explain: "<code>await</code> に到達。<code>Promise.resolve()</code> は即座に解決済みですが、<code>await</code> は常に実行を<span class='highlight-orange'>中断</span>し、以降のコード（継続）を次のマイクロタスクターンまで遅らせます。" },
+      { action: "add_microtask", item: "resume: fetchData()", id: "mic3", explain: "<code>await</code> 以降のコード（継続）が <span class='highlight-purple'>Microtask Queue</span> に登録されました。" },
+      { action: "pop_stack", item: "fetchData()" },
+      { action: "execute_line", lineIdx: 8, explain: "fetchData() が一時停止したので、次の同期処理 <code>console.log('After')</code> が実行されます。" },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "After" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "pop_stack", item: "main()" },
+      { action: "loop_step", step: "execute", explain: "Call Stack が空。Event Loop が Microtask Queue を確認します。" },
+      { action: "loop_step", step: "microtask", explain: "<span class='highlight-purple'>Microtask Queue</span> に fetchData の継続があります。実行します。" },
+      { action: "pop_microtask", id: "mic3" },
+      { action: "push_stack", item: "fetchData() 再開", type: "callstack" },
+      { action: "execute_line", lineIdx: 3, explain: "<code>await</code> 以降のコードが再開されます。" },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "Done!" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "pop_stack", item: "fetchData() 再開" },
+      { action: "done", explain: "実行完了。出力順: Before → Fetching... → After → Done!<br><span class='highlight-purple'>await</span> により fetchData が中断され、同期の 'After' が先に実行されます。" },
+    ]
+  },
+  {
+    name: "⑤ Promise chain",
+    description: "連鎖する Microtask",
+    code: [
+      { text: "console.log('Start');", parts: [{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"Start"},{t:"punc",v:"');"}] },
+      { text: "", parts: [] },
+      { text: "Promise.resolve()", parts: [{t:"kw",v:"Promise"},{t:"punc",v:".resolve()"}] },
+      { text: "  .then(() => {", parts: [{t:"punc",v:"  .then(() => {"}] },
+      { text: "    console.log('then 1');", parts: [{t:"punc",v:"    "},{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"then 1"},{t:"punc",v:"');"}] },
+      { text: "    return 'value';", parts: [{t:"punc",v:"    "},{t:"kw",v:"return"},{t:"punc",v:" '"},{t:"str",v:"value"},{t:"punc",v:"';"}] },
+      { text: "  })", parts: [{t:"punc",v:"  })"}] },
+      { text: "  .then(() => {", parts: [{t:"punc",v:"  .then(() => {"}] },
+      { text: "    console.log('then 2');", parts: [{t:"punc",v:"    "},{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"then 2"},{t:"punc",v:"');"}] },
+      { text: "  });", parts: [{t:"punc",v:"  });"}] },
+      { text: "", parts: [] },
+      { text: "console.log('End');", parts: [{t:"fn",v:"console.log"},{t:"punc",v:"('"},{t:"str",v:"End"},{t:"punc",v:"');"}] },
+    ],
+    steps: [
+      { action: "explain", text: "Promise チェーンは各 <code>.then</code> が別の <span class='highlight-purple'>Microtask</span> として登録されます。" },
+      { action: "push_stack", item: "main()", type: "callstack", line: -1 },
+      { action: "execute_line", lineIdx: 0 },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "Start" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "execute_line", lineIdx: 2, explain: "<code>Promise.resolve()</code> が即解決。最初の <code>.then</code> が <span class='highlight-purple'>Microtask Queue</span> に登録されます。" },
+      { action: "push_stack", item: "Promise chain", type: "callstack" },
+      { action: "add_microtask", item: "then 1", id: "mic4a" },
+      { action: "pop_stack", item: "Promise chain" },
+      { action: "execute_line", lineIdx: 11, explain: "同期処理の <code>console.log('End')</code> を実行します。" },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "End" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "pop_stack", item: "main()" },
+      { action: "loop_step", step: "microtask", explain: "<span class='highlight-purple'>Microtask Queue</span> に 'then 1' があります。実行します。" },
+      { action: "pop_microtask", id: "mic4a" },
+      { action: "push_stack", item: "then 1 cb", type: "callstack" },
+      { action: "execute_line", lineIdx: 4 },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "then 1", explain: "<span class='highlight-green'>「then 1」</span>が出力されます。" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "add_microtask", item: "then 2", id: "mic4b", explain: "'then 1' のコールバックが<strong>完了</strong>したため、チェーンの次の 'then 2' が <span class='highlight-purple'>Microtask Queue</span> に追加されます。(return 値は then 2 の引数になります)" },
+      { action: "pop_stack", item: "then 1 cb" },
+      { action: "loop_step", step: "microtask", explain: "Microtask Queue に 'then 2' があります。" },
+      { action: "pop_microtask", id: "mic4b" },
+      { action: "push_stack", item: "then 2 cb", type: "callstack" },
+      { action: "execute_line", lineIdx: 8 },
+      { action: "push_stack", item: "console.log()", type: "callstack" },
+      { action: "log", text: "then 2" },
+      { action: "pop_stack", item: "console.log()" },
+      { action: "pop_stack", item: "then 2 cb" },
+      { action: "done", explain: "実行完了。出力順: Start → End → then 1 → then 2。各 .then は順番に Microtask として処理されます。" },
+    ]
+  }
+];
+
+// ============================================================
+// State
+// ============================================================
+let currentScenarioIdx = 0;
+let currentStepIdx = 0;
+let autoTimer = null;
+let isPlaying = false;
+
+const state = {
+  callStack: [],      // {id, label}
+  webApis: [],        // {id, label, progress}
+  microtasks: [],     // {id, label}
+  macrotasks: [],     // {id, label}
+};
+
+// ============================================================
+// DOM helpers
+// ============================================================
+const $ = id => document.getElementById(id);
+
+function renderCodeLines(scenario) {
+  const area = $('codeArea');
+  area.innerHTML = '';
+  scenario.code.forEach((line, i) => {
+    const div = document.createElement('div');
+    div.className = 'code-line';
+    div.id = `line-${i}`;
+    const numSpan = document.createElement('span');
+    numSpan.className = 'line-num';
+    numSpan.textContent = line.text ? (i + 1) : '';
+    div.appendChild(numSpan);
+    const codeSpan = document.createElement('span');
+    codeSpan.className = 'line-code';
+    if (line.parts && line.parts.length > 0) {
+      line.parts.forEach(p => {
+        const s = document.createElement('span');
+        s.className = p.t;
+        s.textContent = p.v;
+        codeSpan.appendChild(s);
+      });
+    }
+    div.appendChild(codeSpan);
+    area.appendChild(div);
+  });
+}
+
+function setLineExecuting(lineIdx) {
+  document.querySelectorAll('.code-line').forEach((el, i) => {
+    el.classList.remove('executing');
+    if (i < lineIdx) el.classList.add('executed');
+  });
+  if (lineIdx >= 0) {
+    const el = $(`line-${lineIdx}`);
+    if (el) { el.classList.add('executing'); el.scrollIntoView({block: 'nearest'}); }
+  }
+}
+
+function renderStack() {
+  const el = $('callStackItems');
+  el.innerHTML = '';
+  if (state.callStack.length === 0) {
+    el.innerHTML = '<div class="empty-hint">空</div>';
+    return;
+  }
+  state.callStack.forEach(item => {
+    const div = document.createElement('div');
+    div.className = `frame callstack`;
+    div.id = `frame-${item.id}`;
+    div.textContent = item.label;
+    el.appendChild(div);
+  });
+}
+
+function renderWebApis() {
+  const el = $('webapiItems');
+  el.innerHTML = '';
+  if (state.webApis.length === 0) {
+    el.innerHTML = '<div class="empty-hint">空</div>';
+    return;
+  }
+  state.webApis.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'frame webapi';
+    div.id = `webapi-${item.id}`;
+    div.innerHTML = `${item.label}
+      <div class="progress-bar"><div class="progress-fill" style="width:${item.progress || 0}%"></div></div>`;
+    el.appendChild(div);
+    // Animate progress
+    setTimeout(() => {
+      const fill = div.querySelector('.progress-fill');
+      if (fill) fill.style.width = '100%';
+      fill.style.transitionDuration = '2s';
+    }, 50);
+  });
+}
+
+function renderMicrotasks() {
+  const el = $('microtaskItems');
+  el.innerHTML = '';
+  if (state.microtasks.length === 0) {
+    el.innerHTML = '<div class="empty-hint">空</div>';
+    return;
+  }
+  state.microtasks.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'frame microtask';
+    div.id = `mic-${item.id}`;
+    div.textContent = item.label;
+    el.appendChild(div);
+  });
+}
+
+function renderMacrotasks() {
+  const el = $('macrotaskItems');
+  el.innerHTML = '';
+  if (state.macrotasks.length === 0) {
+    el.innerHTML = '<div class="empty-hint">空</div>';
+    return;
+  }
+  state.macrotasks.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'frame macrotask';
+    div.id = `mac-${item.id}`;
+    div.textContent = item.label;
+    el.appendChild(div);
+  });
+}
+
+function setExplanation(html) {
+  const el = $('explanationText');
+  el.style.opacity = '0';
+  setTimeout(() => {
+    el.innerHTML = html;
+    el.style.opacity = '1';
+    el.style.transition = 'opacity 0.3s';
+  }, 150);
+}
+
+function addLogEntry(text) {
+  const log = $('outputLog');
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function setLoopStep(active) {
+  ['execute', 'microtask', 'macrotask'].forEach(s => {
+    $(`step-${s}`).classList.remove('active');
+  });
+  const loopCircle = $('loopCircle');
+  const loopStatus = $('loopStatus');
+  if (active) {
+    $(`step-${active}`).classList.add('active');
+    loopCircle.classList.add('spinning');
+    loopStatus.classList.add('active');
+    const labels = {
+      execute: 'Call Stack 確認中',
+      microtask: 'Microtask 処理中',
+      macrotask: 'Macrotask 処理中'
+    };
+    loopStatus.textContent = labels[active] || '動作中';
+  } else {
+    loopCircle.classList.remove('spinning');
+    loopStatus.classList.remove('active');
+    loopStatus.textContent = '待機中...';
+  }
+}
+
+function updateStepIndicator() {
+  const scenario = SCENARIOS[currentScenarioIdx];
+  const total = scenario.steps.length;
+  $('stepLabel').textContent = `ステップ: ${currentStepIdx} / ${total}`;
+  const dots = $('stepDots');
+  dots.innerHTML = '';
+  const max = Math.min(total, 20);
+  for (let i = 0; i < max; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'step-dot';
+    if (i < currentStepIdx) dot.classList.add('done');
+    else if (i === currentStepIdx) dot.classList.add('current');
+    dots.appendChild(dot);
+  }
+}
+
+// ============================================================
+// Step processor
+// ============================================================
+function processStep(step) {
+  switch (step.action) {
+    case 'explain':
+      setExplanation(step.text);
+      break;
+
+    case 'push_stack':
+      state.callStack.push({ id: step.item.replace(/[^a-zA-Z0-9]/g, '_') + Date.now(), label: step.item });
+      renderStack();
+      if (step.explain) setExplanation(step.explain);
+      break;
+
+    case 'pop_stack': {
+      const idx = [...state.callStack].reverse().findIndex(f => f.label === step.item);
+      if (idx !== -1) {
+        const realIdx = state.callStack.length - 1 - idx;
+        state.callStack.splice(realIdx, 1);
+      }
+      renderStack();
+      if (step.explain) setExplanation(step.explain);
+      break;
+    }
+
+    case 'execute_line':
+      setLineExecuting(step.lineIdx);
+      if (step.explain) setExplanation(step.explain);
+      break;
+
+    case 'log':
+      addLogEntry(step.text);
+      if (step.explain) setExplanation(step.explain);
+      break;
+
+    case 'add_webapi':
+      state.webApis.push({ id: step.id, label: step.item, progress: 0 });
+      renderWebApis();
+      if (step.explain) setExplanation(step.explain);
+      break;
+
+    case 'webapi_done': {
+      const i = state.webApis.findIndex(w => w.id === step.id);
+      if (i !== -1) state.webApis.splice(i, 1);
+      renderWebApis();
+      if (step.explain) setExplanation(step.explain);
+      break;
+    }
+
+    case 'add_microtask':
+      state.microtasks.push({ id: step.id, label: step.item });
+      renderMicrotasks();
+      if (step.explain) setExplanation(step.explain);
+      break;
+
+    case 'pop_microtask': {
+      const i = state.microtasks.findIndex(m => m.id === step.id);
+      if (i !== -1) state.microtasks.splice(i, 1);
+      renderMicrotasks();
+      if (step.explain) setExplanation(step.explain);
+      break;
+    }
+
+    case 'add_macrotask':
+      state.macrotasks.push({ id: step.id, label: step.item });
+      renderMacrotasks();
+      if (step.explain) setExplanation(step.explain);
+      break;
+
+    case 'pop_macrotask': {
+      const i = state.macrotasks.findIndex(m => m.id === step.id);
+      if (i !== -1) state.macrotasks.splice(i, 1);
+      renderMacrotasks();
+      if (step.explain) setExplanation(step.explain);
+      break;
+    }
+
+    case 'loop_step':
+      setLoopStep(step.step);
+      if (step.explain) setExplanation(step.explain);
+      break;
+
+    case 'done':
+      setLoopStep(null);
+      $('btnPlay').disabled = true;
+      if (step.explain) setExplanation(step.explain);
+      // Mark all lines as executed
+      document.querySelectorAll('.code-line').forEach(el => {
+        el.classList.remove('executing');
+        el.classList.add('executed');
+      });
+      if (autoTimer) { clearInterval(autoTimer); autoTimer = null; isPlaying = false; $('btnAuto').textContent = '▶ 自動再生'; }
+      break;
+  }
+}
+
+// ============================================================
+// Controls
+// ============================================================
+function playStep() {
+  const scenario = SCENARIOS[currentScenarioIdx];
+  if (currentStepIdx >= scenario.steps.length) return;
+  const step = scenario.steps[currentStepIdx];
+  processStep(step);
+  currentStepIdx++;
+  updateStepIndicator();
+}
+
+function toggleAuto() {
+  if (isPlaying) {
+    clearInterval(autoTimer);
+    autoTimer = null;
+    isPlaying = false;
+    $('btnAuto').innerHTML = '<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg> 自動再生';
+  } else {
+    isPlaying = true;
+    $('btnAuto').innerHTML = '⏸ 一時停止';
+    const speed = parseInt($('speedSlider').value);
+    autoTimer = setInterval(() => {
+      const scenario = SCENARIOS[currentScenarioIdx];
+      if (currentStepIdx >= scenario.steps.length) {
+        clearInterval(autoTimer); autoTimer = null; isPlaying = false;
+        $('btnAuto').innerHTML = '<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg> 自動再生';
+        return;
+      }
+      playStep();
+    }, speed);
+  }
+}
+
+function resetScenario() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; isPlaying = false; }
+  currentStepIdx = 0;
+  state.callStack = [];
+  state.webApis = [];
+  state.microtasks = [];
+  state.macrotasks = [];
+  renderStack();
+  renderWebApis();
+  renderMicrotasks();
+  renderMacrotasks();
+  $('outputLog').innerHTML = '';
+  setLoopStep(null);
+  $('btnPlay').disabled = false;
+  $('btnAuto').innerHTML = '<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg> 自動再生';
+  document.querySelectorAll('.code-line').forEach(el => {
+    el.classList.remove('executing', 'executed');
+  });
+  updateStepIndicator();
+  setExplanation('「次のステップ」または「自動再生」ボタンを押して開始してください。');
+}
+
+function selectScenario(idx) {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; isPlaying = false; }
+  currentScenarioIdx = idx;
+  currentStepIdx = 0;
+  state.callStack = [];
+  state.webApis = [];
+  state.microtasks = [];
+  state.macrotasks = [];
+  renderStack();
+  renderWebApis();
+  renderMicrotasks();
+  renderMacrotasks();
+  $('outputLog').innerHTML = '';
+  setLoopStep(null);
+  $('btnPlay').disabled = false;
+  $('btnAuto').innerHTML = '<svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg> 自動再生';
+  renderScenarioTabs();
+  renderCodeLines(SCENARIOS[idx]);
+  updateStepIndicator();
+  setExplanation(`<strong>${SCENARIOS[idx].name}</strong> — ${SCENARIOS[idx].description}。「次のステップ」または「自動再生」ボタンで開始します。`);
+}
+
+function renderScenarioTabs() {
+  const tabs = $('scenarioTabs');
+  tabs.innerHTML = '';
+  SCENARIOS.forEach((s, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'scenario-tab' + (i === currentScenarioIdx ? ' active' : '');
+    btn.textContent = s.name;
+    btn.onclick = () => selectScenario(i);
+    tabs.appendChild(btn);
+  });
+}
+
+// Speed slider
+$('speedSlider').addEventListener('input', function() {
+  $('speedLabel').textContent = (this.value / 1000).toFixed(1) + 's';
+  if (isPlaying) {
+    clearInterval(autoTimer);
+    autoTimer = setInterval(() => {
+      const scenario = SCENARIOS[currentScenarioIdx];
+      if (currentStepIdx >= scenario.steps.length) {
+        clearInterval(autoTimer); autoTimer = null; isPlaying = false;
+        return;
+      }
+      playStep();
+    }, parseInt(this.value));
+  }
+});
+
+// ============================================================
+// Init
+// ============================================================
+renderScenarioTabs();
+renderCodeLines(SCENARIOS[0]);
+renderStack();
+renderWebApis();
+renderMicrotasks();
+renderMacrotasks();
+updateStepIndicator();
+setExplanation(`<strong>${SCENARIOS[0].name}</strong> — ${SCENARIOS[0].description}。「次のステップ」または「自動再生」ボタンで開始します。`);
+</script>
+</body>
+</html>

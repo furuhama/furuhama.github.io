@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rust Ownership 可視化</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #ffffff; --surface: #f6f8fa; --surface2: #eaeef2;
+      --border: #d0d7de; --text: #1f2328; --text-muted: #636c76;
+      --green: #1a7f37; --blue: #0969da; --purple: #8250df;
+      --orange: #bc4c00; --red: #cf222e; --yellow: #9a6700;
+      --rust: #ce412b;
+    }
+    body { background:var(--bg); color:var(--text); font-family:"Noto Sans","Helvetica Neue",Helvetica,Arial,sans-serif; min-height:100vh; display:flex; flex-direction:column; font-size:14px; }
+    header { padding:14px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; background:var(--surface); }
+    header h1 { font-size:1.1rem; font-weight:700; color:var(--text); }
+    .badge { background:rgba(206,65,43,0.1); color:var(--rust); border:1px solid rgba(206,65,43,0.3); font-size:0.7rem; font-weight:700; padding:2px 8px; border-radius:12px; }
+    .back-link { font-size:0.75rem; color:var(--text-muted); text-decoration:none; margin-left:auto; display:flex; align-items:center; gap:4px; }
+    .back-link:hover { color:var(--text); }
+    .tab-bar { display:flex; background:var(--surface); border-bottom:1px solid var(--border); padding:0 24px; }
+    .tab-btn { padding:10px 18px; font-size:0.82rem; font-weight:500; color:var(--text-muted); background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; transition:all 0.15s; margin-bottom:-1px; }
+    .tab-btn.active { color:var(--rust); border-bottom-color:var(--rust); font-weight:700; }
+    .tab-btn:hover:not(.active) { color:var(--text); }
+    .main { display:flex; flex:1; }
+    .svg-panel { flex:1; padding:20px 24px 16px; display:flex; flex-direction:column; align-items:center; gap:10px; }
+    #mainSvg { width:100%; max-width:700px; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
+    .svg-note { font-size:0.72rem; color:var(--text-muted); align-self:flex-start; max-width:700px; width:100%; }
+    .info-panel { width:300px; min-width:260px; border-left:1px solid var(--border); background:var(--surface); display:flex; flex-direction:column; }
+    .info-section { padding:14px 16px; border-bottom:1px solid var(--border); }
+    .info-title { font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); margin-bottom:8px; }
+    .scenario-desc { font-size:0.8rem; color:var(--text); line-height:1.65; }
+    .scenario-desc code { background:var(--surface2); padding:1px 5px; border-radius:4px; font-family:'Fira Code',Consolas,monospace; font-size:0.76rem; }
+    .step-explain { font-size:0.8rem; color:var(--text); line-height:1.75; min-height:80px; transition:opacity 0.2s; }
+    .step-explain .hl-rust   { color:var(--rust);   font-weight:700; }
+    .step-explain .hl-green  { color:var(--green);  font-weight:700; }
+    .step-explain .hl-red    { color:var(--red);    font-weight:700; }
+    .step-explain .hl-blue   { color:var(--blue);   font-weight:700; }
+    .step-explain .hl-orange { color:var(--orange); font-weight:700; }
+    .step-explain code { background:var(--surface2); padding:1px 5px; border-radius:4px; font-family:'Fira Code',Consolas,monospace; font-size:0.76rem; }
+    .legend { padding:10px 16px; display:flex; flex-direction:column; gap:6px; border-bottom:1px solid var(--border); }
+    .legend-item { display:flex; align-items:center; gap:8px; font-size:0.72rem; color:var(--text-muted); }
+    .legend-box { width:14px; height:14px; border-radius:3px; flex-shrink:0; border:1.5px solid; }
+    .controls { padding:14px 16px; display:flex; flex-direction:column; gap:8px; margin-top:auto; }
+    .controls-row { display:flex; gap:8px; }
+    .btn { padding:7px 12px; border-radius:6px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.8rem; cursor:pointer; transition:all 0.15s; font-weight:500; flex:1; text-align:center; }
+    .btn:hover { background:var(--surface2); }
+    .btn.primary { background:var(--rust); color:#fff; border-color:var(--rust); font-weight:700; }
+    .btn.primary:hover { background:#b33624; }
+    .btn:disabled { opacity:0.4; cursor:not-allowed; }
+    .step-counter { font-size:0.72rem; color:var(--text-muted); text-align:center; }
+    .step-dots { display:flex; gap:4px; justify-content:center; flex-wrap:wrap; }
+    .step-dot { width:6px; height:6px; border-radius:50%; background:var(--border); transition:background 0.2s; }
+    .step-dot.done    { background:var(--green); }
+    .step-dot.current { background:var(--rust); }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <rect x="3" y="4" width="7" height="8" rx="2" stroke="#ce412b" stroke-width="1.8"/>
+    <path d="M10 8 L18 8" stroke="#ce412b" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M14 5 L18 8 L14 11" stroke="#ce412b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="3" y="14" width="7" height="6" rx="2" stroke="#d0d7de" stroke-width="1.5" stroke-dasharray="3,2"/>
+    <path d="M10 17 L14 17" stroke="#d0d7de" stroke-width="1.5" stroke-dasharray="3,2" stroke-linecap="round"/>
+  </svg>
+  <h1>Rust Ownership 可視化</h1>
+  <span class="badge">Interactive</span>
+  <a class="back-link" href="index.html">
+    <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+      <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0z"/>
+    </svg>
+    一覧へ戻る
+  </a>
+</header>
+
+<div class="tab-bar" id="tabBar"></div>
+
+<div class="main">
+  <div class="svg-panel">
+    <svg id="mainSvg" viewBox="0 0 700 400" preserveAspectRatio="xMidYMid meet"></svg>
+    <p class="svg-note">Rust の所有権システムはコンパイル時にメモリ安全性を保証します。GC なしでダングリングポインタやデータ競合を防止します。</p>
+  </div>
+
+  <div class="info-panel">
+    <div class="info-section">
+      <div class="info-title">シナリオ</div>
+      <div class="scenario-desc" id="scenarioDesc"></div>
+    </div>
+    <div class="info-section">
+      <div class="info-title">ステップ説明</div>
+      <div class="step-explain" id="stepExplain"></div>
+    </div>
+    <div class="legend">
+      <div class="info-title">凡例</div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(26,127,55,0.12);border-color:#1a7f37;"></div>
+        Owner（所有者）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(9,105,218,0.10);border-color:#0969da;"></div>
+        Immutable Borrow（&amp;T）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:rgba(154,103,0,0.10);border-color:#9a6700;"></div>
+        Mutable Borrow（&amp;mut T）
+      </div>
+      <div class="legend-item">
+        <div class="legend-box" style="background:#f6f8fa;border-color:#d0d7de;"></div>
+        Moved / Dropped（解放済み）
+      </div>
+    </div>
+    <div class="controls">
+      <div class="controls-row">
+        <button class="btn" id="btnPrev" onclick="prevStep()">◀ 前へ</button>
+        <button class="btn primary" id="btnNext" onclick="nextStep()">次へ ▶</button>
+      </div>
+      <div class="controls-row">
+        <button class="btn" id="btnAuto" onclick="toggleAuto()">▶ 自動再生</button>
+        <button class="btn" onclick="resetScenario()">↺ リセット</button>
+      </div>
+      <div class="step-counter" id="stepCounter">ステップ: 1 / 1</div>
+      <div class="step-dots" id="stepDots"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── SVG helpers ──────────────────────────────────────────────
+const svgNS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs, text) {
+  const e = document.createElementNS(svgNS, tag);
+  if (attrs) Object.entries(attrs).forEach(([k, v]) => e.setAttribute(k, String(v)));
+  if (text != null) e.textContent = text;
+  return e;
+}
+function svgTxt(parent, txt, x, y, opts) {
+  opts = opts || {};
+  const t = svgEl('text', {
+    x, y,
+    'text-anchor': opts.anchor || 'middle',
+    'font-size':   opts.size   || 11,
+    fill:          opts.fill   || '#1f2328',
+    'font-weight': opts.weight || 'normal',
+    'font-family': opts.mono ? 'Fira Code,Consolas,monospace' : '"Noto Sans",sans-serif'
+  }, txt);
+  parent.appendChild(t);
+  return t;
+}
+
+// ── Layout ───────────────────────────────────────────────────
+// Stack frame panes: left=scope1, middle=scope2 (optional), right=heap
+const HEAP_X = 490, HEAP_W = 200, HEAP_Y = 8, HEAP_MAX_H = 390;
+const STACK_X = 8, STACK_Y = 8;
+const VAR_H = 54, VAR_W = 220;
+
+// ── Colors ───────────────────────────────────────────────────
+const VAR_COLORS = {
+  owner:   { fill:'rgba(26,127,55,0.12)',  stroke:'#1a7f37', text:'#1a7f37' },
+  borrow:  { fill:'rgba(9,105,218,0.10)',  stroke:'#0969da', text:'#0550ae' },
+  mutborrow:{ fill:'rgba(154,103,0,0.10)', stroke:'#9a6700', text:'#7d5700' },
+  moved:   { fill:'#f6f8fa',              stroke:'#d0d7de', text:'#9ca3af' },
+  dropped: { fill:'rgba(207,34,46,0.06)',  stroke:'#d0d7de', text:'#9ca3af' },
+  error:   { fill:'rgba(207,34,46,0.12)',  stroke:'#cf222e', text:'#cf222e' },
+};
+const HEAP_COLORS = {
+  live:    { fill:'rgba(26,127,55,0.10)', stroke:'#1a7f37' },
+  freed:   { fill:'rgba(207,34,46,0.06)', stroke:'#cf222e' },
+};
+
+// ── Render ───────────────────────────────────────────────────
+function renderSnapshot(snap) {
+  const svg = document.getElementById('mainSvg');
+  svg.innerHTML = '';
+
+  const scopes  = snap.scopes  || [];
+  const heapObj = snap.heap    || null;
+  const arrows  = snap.arrows  || [];
+  const errMsg  = snap.error   || null;
+
+  // ── Stack scopes ───────────────────────────────────────
+  let scopeX = STACK_X;
+  scopes.forEach(function(scope, si) {
+    const vars = scope.vars || [];
+    const scopeW = VAR_W + 16;
+    const scopeH = Math.max(80, vars.length * VAR_H + 48);
+    svg.appendChild(svgEl('rect', {
+      x:scopeX, y:STACK_Y, width:scopeW, height:scopeH, rx:8,
+      fill:'rgba(206,65,43,0.02)', stroke:'rgba(206,65,43,0.3)', 'stroke-width':1.5
+    }));
+    svgTxt(svg, scope.label || ('スコープ ' + (si+1)), scopeX + scopeW/2, STACK_Y + 17,
+      { size:10, weight:'700', fill:'#ce412b' });
+
+    vars.forEach(function(v, vi) {
+      const vy = STACK_Y + 32 + vi * VAR_H;
+      const c = VAR_COLORS[v.kind] || VAR_COLORS.owner;
+      const hl = v.highlight;
+      svg.appendChild(svgEl('rect', {
+        x:scopeX+8, y:vy, width:VAR_W, height:VAR_H-6, rx:5,
+        fill: hl ? 'rgba(206,65,43,0.18)' : c.fill,
+        stroke: hl ? '#ce412b' : c.stroke,
+        'stroke-width': hl ? 2.2 : 1.5,
+        ...(v.kind === 'moved' || v.kind === 'dropped' ? {'stroke-dasharray':'5,3'} : {})
+      }));
+      // Variable name
+      svgTxt(svg, v.name, scopeX + 22, vy + 20, { size:12, weight:'700', fill:c.text, mono:true, anchor:'start' });
+      // Type / kind badge
+      const kindLabel = v.kind === 'owner' ? 'owner' : v.kind === 'borrow' ? '&T' : v.kind === 'mutborrow' ? '&mut T' : v.kind === 'moved' ? 'moved' : 'dropped';
+      svgTxt(svg, kindLabel, scopeX + 22, vy + 36, { size:9, fill:c.text, anchor:'start', mono:true });
+      // Value or note
+      if (v.val !== undefined) {
+        svgTxt(svg, '= ' + v.val, scopeX + VAR_W - 4, vy + 20, { size:11, fill:'#1f2328', anchor:'end', mono:true });
+      }
+      if (v.note) {
+        svgTxt(svg, v.note, scopeX + VAR_W - 4, vy + 36, { size:9, fill:'#636c76', anchor:'end' });
+      }
+    });
+    scopeX += scopeW + 12;
+  });
+
+  // ── Heap ──────────────────────────────────────────────
+  if (heapObj) {
+    const hc = HEAP_COLORS[heapObj.state] || HEAP_COLORS.live;
+    const hH = Math.max(70, 28 + (heapObj.fields || []).length * 24 + 12);
+    svg.appendChild(svgEl('rect', {
+      x:HEAP_X, y:HEAP_Y, width:HEAP_W, height:hH, rx:8,
+      fill:hc.fill, stroke:hc.stroke, 'stroke-width':1.8,
+      ...(heapObj.state === 'freed' ? {'stroke-dasharray':'5,3'} : {})
+    }));
+    svgTxt(svg, 'Heap', HEAP_X + HEAP_W/2, HEAP_Y + 17, { size:10, weight:'700', fill: heapObj.state === 'freed' ? '#9ca3af' : '#1a7f37' });
+    if (heapObj.state === 'freed') {
+      svgTxt(svg, '解放済み (drop)', HEAP_X + HEAP_W/2, HEAP_Y + hH/2 + 6, { size:11, weight:'700', fill:'#9ca3af' });
+    } else {
+      (heapObj.fields || []).forEach(function(f, fi) {
+        const fy = HEAP_Y + 26 + fi * 24;
+        svgTxt(svg, f, HEAP_X + 12, fy, { size:10.5, fill:'#1f2328', anchor:'start', mono:true });
+      });
+    }
+  }
+
+  // ── Arrows (stack var → heap) ─────────────────────────
+  arrows.forEach(function(a) {
+    // a: { fromScope, fromVar, color, label, style }
+    const scope = scopes[a.fromScope || 0];
+    if (!scope) return;
+    const vi = a.fromVar || 0;
+    const vy = STACK_Y + 32 + vi * VAR_H + (VAR_H-6)/2;
+    const vx = STACK_X + (a.fromScope || 0) * (VAR_W + 28) + VAR_W + 8;
+    const tx = HEAP_X - 2, ty = HEAP_Y + 40;
+    const color = a.color || '#1a7f37';
+    const dash  = a.dash ? '5,3' : null;
+    svg.appendChild(svgEl('line', {
+      x1:vx, y1:vy, x2:tx, y2:ty, stroke:color, 'stroke-width':1.6,
+      ...(dash ? {'stroke-dasharray':dash} : {})
+    }));
+    const dx=tx-vx, dy=ty-vy, len=Math.hypot(dx,dy);
+    if (len > 5) {
+      const ux=dx/len, uy=dy/len, ex=tx-ux*7, ey=ty-uy*7;
+      svg.appendChild(svgEl('polygon', {
+        points: tx+','+ty+' '+(ex-uy*3)+','+(ey+ux*3)+' '+(ex+uy*3)+','+(ey-ux*3), fill:color
+      }));
+    }
+    if (a.label) {
+      svgTxt(svg, a.label, (vx+tx)/2, (vy+ty)/2 - 5, { size:9.5, fill:color, weight:'700' });
+    }
+  });
+
+  // ── Compiler error overlay ────────────────────────────
+  if (errMsg) {
+    const ey = 350;
+    svg.appendChild(svgEl('rect', {
+      x:8, y:ey, width:684, height:44, rx:6,
+      fill:'rgba(207,34,46,0.1)', stroke:'#cf222e', 'stroke-width':1.8
+    }));
+    svgTxt(svg, '🛑  コンパイルエラー: ' + errMsg, 12, ey + 18, { size:10.5, weight:'700', fill:'#cf222e', anchor:'start' });
+    svgTxt(svg, 'borrow checker がコンパイル時に検出しました', 12, ey + 34, { size:9.5, fill:'#cf222e', anchor:'start' });
+  }
+}
+
+// ============================================================
+// Scenarios
+// ============================================================
+const SCENARIOS = [
+
+  // ── Scenario 1: 所有権のムーブ ───────────────────────────
+  {
+    name: '① 所有権のムーブ',
+    description: 'Rust では値を別の変数に代入すると<strong>所有権がムーブ</strong>されます。ムーブ後、元の変数は使用できません。これにより二重解放（double free）を防ぎます。',
+    steps: [
+      {
+        scopes: [{
+          label: 'fn main()',
+          vars: [{ name:'s1', kind:'owner', val:'"hello"', note:'String (heap)' }]
+        }],
+        heap: { state:'live', fields:['ptr → "hello"', 'len: 5', 'cap: 5'] },
+        arrows: [{ fromScope:0, fromVar:0, color:'#1a7f37', label:'owns' }],
+        explain: '<code>let s1 = String::from("hello");</code><br>s1 が String の<strong>所有者（Owner）</strong>になります。<br>String はヒープにデータ（"hello"）を確保し、s1 はそのポインタ・長さ・容量をスタックに持ちます。<br>s1 がスコープを外れると自動的に <code>drop</code> されヒープが解放されます。'
+      },
+      {
+        scopes: [{
+          label: 'fn main()',
+          vars: [
+            { name:'s1', kind:'moved', val:'"hello"', note:'moved → s2' },
+            { name:'s2', kind:'owner', val:'"hello"', note:'String (heap)', highlight:true },
+          ]
+        }],
+        heap: { state:'live', fields:['ptr → "hello"', 'len: 5', 'cap: 5'] },
+        arrows: [{ fromScope:0, fromVar:1, color:'#1a7f37', label:'owns' }],
+        explain: '<code>let s2 = s1;</code><br><span class="hl-rust">所有権が s1 → s2 にムーブ！</span><br>Rust はデータをコピーせず、所有権だけを移動します。<br>s1 は "moved" 状態になり、<strong>以降 s1 は使用不可</strong>です（コンパイルエラー）。<br>ヒープデータのポインタは s2 だけが持ちます → double free 不可能。'
+      },
+      {
+        scopes: [{
+          label: 'fn main()',
+          vars: [
+            { name:'s1', kind:'moved', val:'—', note:'使用不可（moved）', highlight:true },
+            { name:'s2', kind:'owner', val:'"hello"', note:'owner' },
+          ]
+        }],
+        heap: { state:'live', fields:['ptr → "hello"', 'len: 5', 'cap: 5'] },
+        arrows: [{ fromScope:0, fromVar:1, color:'#1a7f37', label:'owns' }],
+        error: 'use of moved value: `s1`',
+        explain: '<span class="hl-red">s1 を使おうとするとコンパイルエラー。</span><br>Rust コンパイラ（borrow checker）が<strong>コンパイル時に</strong>検出します。<br>実行時エラーではありません。<br>これにより use-after-move バグが防止されます。'
+      },
+      {
+        scopes: [{
+          label: 'fn main()',
+          vars: [
+            { name:'s1', kind:'moved', val:'—', note:'moved' },
+            { name:'s2', kind:'dropped', val:'—', note:'スコープ終了 → drop', highlight:true },
+          ]
+        }],
+        heap: { state:'freed' },
+        arrows: [],
+        explain: '<span class="hl-green">スコープ終了 → s2 が drop される。</span><br>s2 がスコープを外れると、Rust は自動的に <code>drop(s2)</code> を呼び出します。<br>ヒープメモリが解放されます。<br>GC なしで、かつ <strong>解放後使用（use-after-free）なし</strong>が保証されます。'
+      },
+    ]
+  },
+
+  // ── Scenario 2: 借用（Borrowing）────────────────────────
+  {
+    name: '② 借用（Borrowing）',
+    description: '所有権を渡さずに参照（<strong>borrow</strong>）を使うことで、値を共有できます。<code>&amp;T</code>（不変借用）と <code>&amp;mut T</code>（可変借用）のルールを確認します。',
+    steps: [
+      {
+        scopes: [{
+          label: 'fn main()',
+          vars: [{ name:'s', kind:'owner', val:'"hello"', note:'String owner' }]
+        }],
+        heap: { state:'live', fields:['ptr → "hello"', 'len: 5', 'cap: 5'] },
+        arrows: [{ fromScope:0, fromVar:0, color:'#1a7f37', label:'owns' }],
+        explain: '初期状態。<code>s</code> が String の所有者です。<br>この値を別の関数に渡したい場合、所有権ムーブを避けて<strong>参照（borrow）</strong>を使います。'
+      },
+      {
+        scopes: [{
+          label: 'fn main()',
+          vars: [
+            { name:'s', kind:'owner', val:'"hello"', note:'owner（貸し出し中）' },
+            { name:'r1', kind:'borrow', val:'&s', note:'不変参照 &T' },
+            { name:'r2', kind:'borrow', val:'&s', note:'不変参照 &T' },
+          ]
+        }],
+        heap: { state:'live', fields:['ptr → "hello"', 'len: 5', 'cap: 5'] },
+        arrows: [
+          { fromScope:0, fromVar:0, color:'#1a7f37', label:'owns' },
+          { fromScope:0, fromVar:1, color:'#0969da', label:'&T' },
+          { fromScope:0, fromVar:2, color:'#0969da', label:'&T' },
+        ],
+        explain: '<span class="hl-blue">不変借用（&amp;T）は同時に複数持てます。</span><br><code>let r1 = &amp;s;</code><br><code>let r2 = &amp;s;</code><br>読み取り専用の参照は何個でも同時に存在できます（データ競合なし）。<br>s は所有権を持ちながら "貸し出し中" 状態になります。'
+      },
+      {
+        scopes: [{
+          label: 'fn main()',
+          vars: [
+            { name:'s', kind:'owner', val:'"hello"', note:'owner' },
+            { name:'rm', kind:'mutborrow', val:'&mut s', note:'可変参照 &mut T', highlight:true },
+          ]
+        }],
+        heap: { state:'live', fields:['ptr → "hello"', 'len: 5', 'cap: 5'] },
+        arrows: [
+          { fromScope:0, fromVar:0, color:'#1a7f37', label:'owns' },
+          { fromScope:0, fromVar:1, color:'#9a6700', label:'&mut' },
+        ],
+        explain: '<span class="hl-orange">可変借用（&amp;mut T）は同時に 1 つだけ。</span><br><code>let rm = &amp;mut s;</code><br>可変参照が存在する間、<strong>他の参照（不変・可変とも）は一切作れません。</strong><br>これにより「読み取り中に書き換え」というデータ競合が防止されます。<br>ルール: <strong>1 つの &amp;mut T、または 複数の &amp;T のどちらか</strong>。'
+      },
+      {
+        scopes: [{
+          label: 'fn main()',
+          vars: [
+            { name:'s', kind:'owner', val:'"hello world"', note:'owner（rm が drop 後）', highlight:true },
+          ]
+        }],
+        heap: { state:'live', fields:['ptr → "hello world"', 'len: 11', 'cap: 11'] },
+        arrows: [{ fromScope:0, fromVar:0, color:'#1a7f37', label:'owns' }],
+        explain: '<span class="hl-green">可変参照 rm が使われなくなり（NLL）、s が再びアクセス可能に。</span><br>Rust の <strong>Non-Lexical Lifetimes (NLL)</strong> により、参照のライフタイムは最後の使用箇所で終わります。<br>rm がスコープを抜けると、s を通じた変更（push_str など）が再び可能になります。<br>ヒープのデータが "hello world" に更新されました。'
+      },
+    ]
+  },
+
+  // ── Scenario 3: ライフタイム ─────────────────────────────
+  {
+    name: '③ ライフタイム',
+    description: 'ライフタイムは参照が<strong>有効である期間</strong>を示す注釈です。コンパイラがダングリングポインタを防ぐために使います。',
+    steps: [
+      {
+        scopes: [
+          { label: '外側スコープ', vars: [] },
+          { label: '内側スコープ', vars: [
+            { name:'s', kind:'owner', val:'"temporary"', note:'内側で定義' }
+          ]}
+        ],
+        heap: { state:'live', fields:['ptr → "temporary"', 'len: 9'] },
+        arrows: [{ fromScope:1, fromVar:0, color:'#1a7f37', label:'owns' }],
+        explain: '外側スコープと内側スコープがあります。<br><code>s</code> は内側スコープで定義された String です。<br>内側スコープが終了すると <code>s</code> は drop されます。'
+      },
+      {
+        scopes: [
+          { label: '外側スコープ', vars: [
+            { name:'r', kind:'borrow', val:'&s ?', note:'dangling になる！', highlight:true }
+          ]},
+          { label: '内側スコープ', vars: [
+            { name:'s', kind:'owner', val:'"temporary"', note:'内側で定義' }
+          ]}
+        ],
+        heap: { state:'live', fields:['ptr → "temporary"', 'len: 9'] },
+        arrows: [
+          { fromScope:1, fromVar:0, color:'#1a7f37', label:'owns' },
+          { fromScope:0, fromVar:0, color:'#cf222e', label:'&s???', dash:true },
+        ],
+        error: 'lifetime of `s` is too short for the borrow',
+        explain: '<span class="hl-red">外側スコープで内側スコープの変数の参照を持とうとしています。</span><br><code>let r = &amp;s;</code> を外側スコープに置こうとすると、<br>s がドロップされた後に r がダングリングポインタになります。<br>Rust コンパイラはライフタイムを解析し<strong>コンパイル時に拒否</strong>します。'
+      },
+      {
+        scopes: [
+          { label: '外側スコープ', vars: [
+            { name:'x', kind:'owner', val:'"long"', note:'longer lifetime' }
+          ]},
+          { label: '内側スコープ', vars: [
+            { name:'r', kind:'borrow', val:'&x', note:'x は外側で生存', highlight:true },
+          ]}
+        ],
+        heap: { state:'live', fields:['ptr → "long"', 'len: 4'] },
+        arrows: [
+          { fromScope:0, fromVar:0, color:'#1a7f37', label:'owns' },
+          { fromScope:1, fromVar:0, color:'#0969da', label:'&x OK' },
+        ],
+        explain: '<span class="hl-green">参照元が参照より長生きする場合は OK。</span><br><code>x</code> は外側スコープ（より長いライフタイム）で定義されています。<br>内側スコープの <code>r = &amp;x</code> は、r のライフタイムが x より短いため安全です。<br>ライフタイムの規則: <strong>参照のライフタイム ≤ 参照先のライフタイム</strong>'
+      },
+      {
+        scopes: [
+          { label: 'fn longest<\'a>', vars: [
+            { name:'x', kind:'borrow', val:'&\'a str', note:'lifetime \'a' },
+            { name:'y', kind:'borrow', val:'&\'a str', note:'lifetime \'a' },
+            { name:'結果', kind:'borrow', val:'&\'a str', note:'shorter of \'a', highlight:true },
+          ]}
+        ],
+        heap: null,
+        arrows: [],
+        explain: '<span class="hl-blue">ライフタイム注釈 <code>\'a</code> の使い方。</span><br><code>fn longest&lt;\'a&gt;(x: &amp;\'a str, y: &amp;\'a str) -&gt; &amp;\'a str</code><br>戻り値の参照のライフタイムが x と y のどちらに結びついているかをコンパイラに教えます。<br>実際には x と y の<strong>短い方のライフタイム</strong>が適用されます。<br>これにより戻り値がダングリングにならないことをコンパイル時に保証できます。'
+      },
+    ]
+  },
+];
+
+// ============================================================
+// State & Controls
+// ============================================================
+let currentScenario = 0, currentStep = 0, autoTimer = null;
+
+function renderStep() {
+  const sc = SCENARIOS[currentScenario], step = sc.steps[currentStep];
+  renderSnapshot(step);
+  const el = document.getElementById('stepExplain');
+  el.style.opacity = 0;
+  setTimeout(function() { el.innerHTML = step.explain || ''; el.style.opacity = 1; }, 100);
+  document.getElementById('btnPrev').disabled = currentStep === 0;
+  document.getElementById('btnNext').disabled = currentStep >= sc.steps.length - 1;
+  updateStepCounter();
+}
+function nextStep() { if (currentStep < SCENARIOS[currentScenario].steps.length-1) { currentStep++; renderStep(); } }
+function prevStep() { if (currentStep > 0) { currentStep--; renderStep(); } }
+function resetScenario() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  currentStep = 0; document.getElementById('btnAuto').textContent = '▶ 自動再生'; renderStep();
+}
+function toggleAuto() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; document.getElementById('btnAuto').textContent = '▶ 自動再生'; }
+  else {
+    document.getElementById('btnAuto').textContent = '⏸ 停止';
+    autoTimer = setInterval(function() {
+      if (currentStep >= SCENARIOS[currentScenario].steps.length-1) {
+        clearInterval(autoTimer); autoTimer = null; document.getElementById('btnAuto').textContent = '▶ 自動再生'; return;
+      }
+      nextStep();
+    }, 1800);
+  }
+}
+function selectScenario(idx) {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  currentScenario = idx; currentStep = 0; document.getElementById('btnAuto').textContent = '▶ 自動再生';
+  document.querySelectorAll('.tab-btn').forEach(function(b,i){ b.classList.toggle('active', i===idx); });
+  document.getElementById('scenarioDesc').innerHTML = SCENARIOS[idx].description;
+  renderStep();
+}
+function updateStepCounter() {
+  const sc = SCENARIOS[currentScenario];
+  document.getElementById('stepCounter').textContent = 'ステップ: '+(currentStep+1)+' / '+sc.steps.length;
+  const dots = document.getElementById('stepDots'); dots.innerHTML = '';
+  sc.steps.forEach(function(_,i){
+    const d = document.createElement('div');
+    d.className = 'step-dot'+(i<currentStep?' done':i===currentStep?' current':'');
+    dots.appendChild(d);
+  });
+}
+(function init() {
+  const tabBar = document.getElementById('tabBar');
+  SCENARIOS.forEach(function(sc,i){
+    const btn = document.createElement('button');
+    btn.className = 'tab-btn'+(i===0?' active':'');
+    btn.textContent = sc.name;
+    btn.onclick = function(){ selectScenario(i); };
+    tabBar.appendChild(btn);
+  });
+  document.getElementById('scenarioDesc').innerHTML = SCENARIOS[0].description;
+  renderStep();
+})();
+</script>
+</body>
+</html>
