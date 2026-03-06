@@ -639,6 +639,20 @@
 
     .step-dot.done { background: var(--green); }
     .step-dot.current { background: var(--blue); }
+
+    @media (max-width: 768px) {
+      header { padding: 10px 12px; flex-wrap: wrap; gap: 8px; }
+      header h1 { font-size: 0.95rem; }
+      .back-link { margin-left: 0; }
+      .main { grid-template-columns: 1fr; }
+      .code-panel { border-right: none; border-bottom: 1px solid var(--border); max-height: 280px; }
+      .viz-panel { padding: 10px; gap: 10px; }
+      .viz-grid { grid-template-columns: 1fr 1fr; }
+      .box.eventloop-box { grid-column: auto; grid-row: auto; }
+      .controls { flex-wrap: wrap; padding: 8px 12px; gap: 6px; }
+      .speed-control { margin-left: 0; width: 100%; }
+      .explanation { padding: 8px 12px; }
+    }
   </style>
 </head>
 <body>
